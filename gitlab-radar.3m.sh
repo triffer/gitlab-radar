@@ -274,19 +274,27 @@ while IFS= read -r mr; do
     | @sh "todo_id=\(if length > 0 then .[0].id else "" end)
       todo_ts=\(if length > 0 then (.[0].created_at | sub("\\.[0-9]+";"") | (try fromdateiso8601 catch 0)) else 0 end)"' <<<"$todos")"
 
-  # already approved and no fresh re-request → this MR isn't waiting for you.
-  # (The list API can't filter on this outside Premium, hence the extra call.
-  # If the approvals endpoint fails, fail open and keep the row.)
+  # already reviewed (approved, commented, or requested changes) and no fresh
+  # re-request → this MR isn't waiting for you.
+  # (The list API can't filter on this outside Premium, hence the extra calls.
+  # If an endpoint fails, fail open and keep the row.)
   approved=$(api "projects/$pid/merge_requests/$iid/approvals" \
     | jq -r --arg me "$me" '[.approved_by[]?.user.username] | (index($me) != null)' 2>/dev/null)
-  if [ "$approved" = "true" ] && [ -z "$todo_id" ]; then
+  reviewed="$approved"
+  # Only check notes when not already confirmed as approved and no re-review pending
+  if [ "$reviewed" != "true" ] && [ -z "$todo_id" ]; then
+    my_notes=$(api "projects/$pid/merge_requests/$iid/notes?per_page=100" \
+      | jq -r --arg me "$me" '[.[] | select(.system == false and .author.username == $me)] | length' 2>/dev/null)
+    [ "${my_notes:-0}" -gt 0 ] && reviewed="true"
+  fi
+  if [ "$reviewed" = "true" ] && [ -z "$todo_id" ]; then
     (( n_review_approved++ ))
     continue
   fi
 
   (( n_review++ ))
   badge=""; [ -n "$todo_id" ] && badge="🔁 "
-  [ "$approved" = "true" ] && badge="🔁 ✓→ "   # you approved, but review was re-requested
+  [ "$approved" = "true" ] && [ -n "$todo_id" ] && badge="🔁 ✓→ "   # you approved, but review was re-requested
   rrow="👀 $badge$ref $author — $title | href=$url size=13"
   if [ -n "$todo_id" ]; then
     rrow+=$'\n'"-- review (re-)requested $(age_str $(( now - todo_ts ))) ago | size=11 color=$ORANGE"
@@ -443,7 +451,7 @@ if (( n_review > 0 || n_review_approved > 0 )); then
   echo "WAITING FOR YOUR REVIEW | size=10 color=$ORANGE"
   for b in "${rows_review[@]}"; do printf '%s\n' "$b"; done
   (( n_review_approved > 0 )) && \
-    echo "✓ $n_review_approved already approved by you — hidden until re-requested | size=11 color=$DIM"
+    echo "✓ $n_review_approved already reviewed by you — hidden until re-requested | size=11 color=$DIM"
   echo "---"
 fi
 if (( n_comment_mrs > 0 )); then
