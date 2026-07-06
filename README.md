@@ -25,10 +25,13 @@ menu bar:   🦊 ❌1 👀2 💬1        (a dim 🦊 when all quiet)
   line keeps the count) — until the author re-requests your review, which
   brings it back with a 🔁 ✓→ badge. A plain 🔁 badge means a pending *review
   requested* to-do; the submenu shows how long ago and lets you mark it done.
-- 💬 **New comments on your MRs** — notes from others since you last looked,
-  with author and snippet. Clicking opens the comment in the browser *and*
-  marks it read; ⌥-click marks it read without opening. Read-state is local
-  (`~/.cache/gitlab-radar`), so it never touches your GitLab to-do list.
+- 💬 **New comments** — notes from others since you last looked, on your own
+  MRs *and* on MRs you're reviewing (including replies after you've already
+  approved — GitLab's own to-do list only fires on an explicit `@mention`, so
+  a plain reply otherwise goes unnoticed). Shows author and snippet; clicking
+  opens the comment in the browser *and* marks it read; ⌥-click marks it read
+  without opening. Read-state is local (`~/.cache/gitlab-radar`), so it never
+  touches your GitLab to-do list.
 - 📋 **To-dos** — mentions, direct replies, "cannot be merged", approvals and
   assignments from your GitLab to-do list, each with a *mark done* action.
 - 📄 **MR overview** — all your open MRs with pipeline state, target branch,
@@ -110,7 +113,7 @@ One script, three API queries per refresh plus two small calls per open MR:
 | Broken default branches   | `GET /projects/:id/pipelines?ref=<default>` for watched projects (project metadata cached 24 h) |
 | Review requests           | `GET /merge_requests?reviewer_username=<you>&state=opened`, minus MRs you approved (per-MR `GET /approvals` — the Premium-only `approved_by` list filter isn't assumed) |
 | Re-review badge 🔁        | pending `review_requested` items from `GET /todos`            |
-| New comments              | per-MR `GET /notes`, diffed against a local last-seen note id |
+| New comments              | per-MR `GET /notes` (your MRs + MRs you're reviewing, even once approved), diffed against a local last-seen note id |
 | Mentions / replies / etc. | `GET /todos` (pending)                                        |
 
 State (read-markers, project cache, sound snapshot) lives in

@@ -7,8 +7,9 @@
 # <swiftbar.hideLastUpdated>false</swiftbar.hideLastUpdated>
 # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 #
-# Menu bar title: 🔴 broken pipelines · 👀 MRs awaiting your review · 💬 MRs of
-# yours with unread comments (zero counts hidden; a dim 🦊 when all quiet).
+# Menu bar title: 🔴 broken pipelines · 👀 MRs awaiting your review · 💬 unread
+# comments on your MRs or ones you're reviewing (zero counts hidden; a dim 🦊
+# when all quiet).
 #
 # Config: ~/.config/gitlab-radar/config (plain bash, see install.sh).
 # Token:  macOS Keychain item "gitlab-radar" (or GITLAB_TOKEN in the config).
@@ -56,6 +57,25 @@ api_post() { curl -sf --max-time 15 -X POST -H "PRIVATE-TOKEN: $TOKEN" "$API/$1"
 seen_set() { # $1 key ("pid:iid"), $2 highest note id considered read
   local tmp; tmp=$(mktemp)
   jq --arg k "$1" --argjson v "$2" '.[$k] = $v' "$SEEN" > "$tmp" && mv "$tmp" "$SEEN"
+}
+
+diff_new_comments() { # $1 = notes json; uses global $key; sets cur_max/new_n/new_author/new_body/new_note_id
+  local notes="$1" last_seen
+  last_seen=$(jq -r --arg k "$key" '.[$k] // "none"' "$SEEN")
+  cur_max=$(jq -r --arg me "$me" \
+    '[.[] | select(.system == false and .author.username != $me) | .id] | max // 0' <<<"$notes")
+  new_n=0; new_author=""; new_body=""; new_note_id=0
+  if [ "$last_seen" = "none" ]; then
+    seen_set "$key" "$cur_max"
+  else
+    eval "$(jq -r --arg me "$me" --argjson last "$last_seen" '
+      [ .[] | select(.system == false and .author.username != $me and .id > $last) ]
+      | sort_by(.id)
+      | @sh "new_n=\(length)
+        new_author=\(if length > 0 then .[-1].author.name else "" end)
+        new_body=\(if length > 0 then (.[-1].body | .[0:90]) else "" end)
+        new_note_id=\(if length > 0 then .[-1].id else 0 end)"' <<<"$notes")"
+  fi
 }
 
 notify() { # macOS notification for feedback from menu actions
@@ -205,21 +225,7 @@ while IFS= read -r mr; do
 
   # new comments from others since last seen (baseline silently on first sight)
   notes=$(api "projects/$pid/merge_requests/$iid/notes?per_page=100&sort=desc") || notes="[]"
-  last_seen=$(jq -r --arg k "$key" '.[$k] // "none"' "$SEEN")
-  cur_max=$(jq -r --arg me "$me" \
-    '[.[] | select(.system == false and .author.username != $me) | .id] | max // 0' <<<"$notes")
-  new_n=0; new_author=""; new_body=""; new_note_id=0
-  if [ "$last_seen" = "none" ]; then
-    seen_set "$key" "$cur_max"
-  else
-    eval "$(jq -r --arg me "$me" --argjson last "$last_seen" '
-      [ .[] | select(.system == false and .author.username != $me and .id > $last) ]
-      | sort_by(.id)
-      | @sh "new_n=\(length)
-        new_author=\(if length > 0 then .[-1].author.name else "" end)
-        new_body=\(if length > 0 then (.[-1].body | .[0:90]) else "" end)
-        new_note_id=\(if length > 0 then .[-1].id else 0 end)"' <<<"$notes")"
-  fi
+  diff_new_comments "$notes"
 
   picon=$(pipe_icon "$p_status")
   row="$picon $ref $title | href=$url size=13"
@@ -278,15 +284,32 @@ while IFS= read -r mr; do
   # re-request → this MR isn't waiting for you.
   # (The list API can't filter on this outside Premium, hence the extra calls.
   # If an endpoint fails, fail open and keep the row.)
+  notes=$(api "projects/$pid/merge_requests/$iid/notes?per_page=100&sort=desc") || notes="[]"
   approved=$(api "projects/$pid/merge_requests/$iid/approvals" \
     | jq -r --arg me "$me" '[.approved_by[]?.user.username] | (index($me) != null)' 2>/dev/null)
   reviewed="$approved"
-  # Only check notes when not already confirmed as approved and no re-review pending
   if [ "$reviewed" != "true" ] && [ -z "$todo_id" ]; then
-    my_notes=$(api "projects/$pid/merge_requests/$iid/notes?per_page=100" \
-      | jq -r --arg me "$me" '[.[] | select(.system == false and .author.username == $me)] | length' 2>/dev/null)
+    my_notes=$(jq -r --arg me "$me" '[.[] | select(.system == false and .author.username == $me)] | length' <<<"$notes")
     [ "${my_notes:-0}" -gt 0 ] && reviewed="true"
   fi
+
+  # new comments from others since last seen — checked even once approved, since
+  # replies to your review comments keep coming after you've signed off.
+  key="$pid:$iid"
+  diff_new_comments "$notes"
+  if (( new_n > 0 )); then
+    (( n_comment_mrs++ ))
+    new_author=$(sanitize "$new_author"); new_body=$(sanitize "$new_body")
+    more=""; (( new_n > 1 )) && more=" (+$(( new_n - 1 )) more)"
+    crow="💬 $ref — $new_author: “${new_body}”$more | size=13"
+    crow+=" bash=\"$SELF\" param1=--open-seen param2=\"$url#note_$new_note_id\" param3=\"$key\" param4=\"$cur_max\" terminal=false refresh=true"
+    crow+=$'\n'"💬 $ref — mark read without opening | alternate=true size=13 bash=\"$SELF\" param1=--seen param2=\"$key\" param3=\"$cur_max\" terminal=false refresh=true"
+    crow+=$'\n'"-- on: $title (reviewing) | size=11 color=$GRAY"
+    rows_comment+=("$crow")
+    pending_pairs+="$key${TAB}$cur_max"$'\n'
+    state_keys+="C $key:$cur_max"$'\n'
+  fi
+
   if [ "$reviewed" = "true" ] && [ -z "$todo_id" ]; then
     (( n_review_approved++ ))
     continue
@@ -455,7 +478,7 @@ if (( n_review > 0 || n_review_approved > 0 )); then
   echo "---"
 fi
 if (( n_comment_mrs > 0 )); then
-  echo "NEW COMMENTS ON YOUR MRS | size=10 color=$BLUE"
+  echo "NEW COMMENTS | size=10 color=$BLUE"
   for b in "${rows_comment[@]}"; do printf '%s\n' "$b"; done
   echo "Mark all read | size=11 bash=\"$SELF\" param1=--seen-all terminal=false refresh=true"
   echo "---"
