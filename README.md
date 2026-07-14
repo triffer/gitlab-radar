@@ -7,7 +7,8 @@ Free, no services, no webhooks, works with gitlab.com and self-hosted
 instances.
 
 ```
-menu bar:   🦊 ❌1 👀2 💬1        (a dim 🦊 when all quiet)
+menu bar:   🦊 ❌1 👀2 💬1 ✅1     (a dim 🦊 when all quiet)
+             │  │   │   │   └─ MRs of yours that have been approved
              │  │   │   └─ MRs of yours with unread comments
              │  │   └─ MRs waiting for your review
              │  └─ failed pipelines (your MRs + watched default branches)
@@ -32,13 +33,20 @@ menu bar:   🦊 ❌1 👀2 💬1        (a dim 🦊 when all quiet)
   opens the comment in the browser *and* marks it read; ⌥-click marks it read
   without opening. Read-state is local (`~/.cache/gitlab-radar`), so it never
   touches your GitLab to-do list.
-- 📋 **To-dos** — mentions, direct replies, "cannot be merged", approvals and
-  assignments from your GitLab to-do list, each with a *mark done* action.
+- ✅ **Approved MRs** — your own open MRs that someone else has approved, so you
+  know they're ready to merge (a "unresolved threads still block merging"
+  warning shows when they aren't). GitLab doesn't create a to-do when your MR is
+  approved, so the radar polls each MR's approvals directly. This mirrors live
+  state; the optional sound fires once per *new* approver.
+- 📋 **To-dos** — mentions, direct replies, "cannot be merged", approval
+  requests and assignments from your GitLab to-do list, each with a *mark done*
+  action.
 - 📄 **MR overview** — all your open MRs with pipeline state, target branch,
   and an "unresolved threads block merging" warning.
 - 🔊 **Optional sounds** — off by default; the 🔕/🔔 toggle enables one system
   sound per *new* event category (Basso = build broke, Ping = review
-  requested, Pop = new comment). One sound per refresh, never a burst.
+  requested, Pop = new comment, Glass = MR approved). One sound per refresh,
+  never a burst.
 - 🔐 **Token lives in the macOS Keychain** (service `gitlab-radar`), not in a
   dotfile.
 - 🔁 **Token rotation built in** — GitLab caps token lifetime at one year, so
@@ -92,6 +100,7 @@ file in your SwiftBar plugin folder to change it.
 |----------------------|--------------------------------------------|---------------------------------------------------------------|
 | ❌ Broken build      | the failed pipeline (⌥-click: the MR)      | fixing it — the row mirrors live state, next passing/running pipeline removes it |
 | 👀 Review request    | the MR                                     | approving the MR / being removed as reviewer (re-requesting review brings it back, badged 🔁 ✓→); the 🔁 badge alone via *✓ mark to-do done* |
+| ✅ Approved MR       | the MR                                     | merging/closing it, or the approval being revoked — it mirrors live state |
 | 💬 New comment       | the exact comment (`…#note_<id>` anchor)   | the click itself (opens **and** marks read); ⌥-click marks read without opening; *Mark all read* for everything |
 | 📋 To-do             | GitLab's deep link (comment anchor etc.)   | *✓ mark done* (syncs to your GitLab to-do list) or resolving it in GitLab |
 | My open MRs          | the MR (submenu: its pipeline)             | merging/closing the MR — it's an overview, not an alert       |
@@ -105,12 +114,13 @@ in sync.
 
 ## How it works
 
-One script, three API queries per refresh plus two small calls per open MR:
+One script, three API queries per refresh plus a few small calls per open MR:
 
 | Signal                    | Source                                                        |
 |---------------------------|---------------------------------------------------------------|
 | Broken MR pipelines       | `GET /merge_requests?scope=created_by_me&state=opened` → per-MR `head_pipeline.status` |
 | Broken default branches   | `GET /projects/:id/pipelines?ref=<default>` for watched projects (project metadata cached 24 h) |
+| Approved MRs of yours     | per-MR `GET /approvals` → `approved_by` (others only)         |
 | Review requests           | `GET /merge_requests?reviewer_username=<you>&state=opened`, minus MRs you approved (per-MR `GET /approvals` — the Premium-only `approved_by` list filter isn't assumed) |
 | Re-review badge 🔁        | pending `review_requested` items from `GET /todos`            |
 | New comments              | per-MR `GET /notes` (your MRs + MRs you're reviewing, even once approved), diffed against a local last-seen note id |

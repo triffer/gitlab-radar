@@ -196,8 +196,8 @@ mrs=$(api "merge_requests?scope=created_by_me&state=opened&per_page=50")   || mr
 reviews=$(api "merge_requests?scope=all&state=opened&reviewer_username=$me&per_page=50") || reviews="[]"
 todos=$(api "todos?state=pending&per_page=100")                            || todos="[]"
 
-n_fail=0; n_review=0; n_review_approved=0; n_comment_mrs=0
-rows_fail=(); rows_review=(); rows_comment=(); rows_mymr=(); rows_todo=()
+n_fail=0; n_review=0; n_review_approved=0; n_comment_mrs=0; n_approved=0
+rows_fail=(); rows_review=(); rows_comment=(); rows_mymr=(); rows_todo=(); rows_approved=()
 state_keys=""     # snapshot lines "F key" / "R key" / "C key" for sound diffing
 pending_pairs=""  # "key<TAB>maxid" lines -> pending-max.json for --seen-all
 
@@ -245,6 +245,30 @@ while IFS= read -r mr; do
     row+=$'\n'"-- 💬 $new_n new comment(s) | size=11 color=$BLUE"
     pending_pairs+="$key${TAB}$cur_max"$'\n'
     state_keys+="C $key:$cur_max"$'\n'
+  fi
+
+  # approvals on your MR (others only — you can't approve your own). This is
+  # state (mirrors GitLab), but the sound snapshot below fires once per *new*
+  # approver, so it doubles as a notification.
+  approvals=$(api "projects/$pid/merge_requests/$iid/approvals") || approvals="{}"
+  eval "$(jq -r --arg me "$me" '
+    [.approved_by[]?.user | select(.username != $me)]
+    | @sh "n_appr=\(length)
+      appr_names=\(if length > 0 then ([.[].name] | join(", ")) else "" end)
+      appr_keys=\(if length > 0 then ([.[].username] | sort | join(",")) else "" end)"' <<<"$approvals")"
+  if (( n_appr > 0 )); then
+    (( n_approved++ ))
+    appr_names=$(sanitize "$appr_names")
+    arow="✅ $ref — approved by $appr_names | href=$url size=13"
+    arow+=$'\n'"-- $title | size=11 color=$GRAY"
+    if [ "$threads_ok" != "true" ]; then
+      arow+=$'\n'"-- ⚠️ unresolved threads still block merging | size=11 color=$ORANGE"
+    else
+      arow+=$'\n'"-- ready to merge | size=11 color=$GREEN"
+    fi
+    rows_approved+=("$arow")
+    row+=$'\n'"-- ✅ approved by $appr_names | size=11 color=$GREEN"
+    state_keys+="A $key:$appr_keys"$'\n'
   fi
 
   if [ "$p_status" = "failed" ]; then
@@ -342,7 +366,7 @@ while IFS= read -r td; do
     mentioned)          lbl="🏷 $tauthor mentioned you" ;;
     directly_addressed) lbl="🗣 $tauthor replied to you" ;;
     unmergeable)        lbl="⚠️ cannot be merged" ;;
-    approval_required)  lbl="✅ approval required" ;;
+    approval_required)  lbl="✍️ approval required" ;;
     assigned)           lbl="📌 assigned to you" ;;
     *)                  lbl="• $action" ;;
   esac
@@ -419,7 +443,7 @@ fi
 
 # ---- sounds on NEW events (🔕 by default; toggle at the bottom) ----------------
 if [ -f "$SOUNDS_FLAG" ] && [ -f "$SNAPSHOT" ] && command -v afplay >/dev/null 2>&1; then
-  new_f=0; new_r=0; new_c=0
+  new_f=0; new_r=0; new_c=0; new_a=0
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     grep -qxF "$line" "$SNAPSHOT" 2>/dev/null && continue
@@ -427,12 +451,14 @@ if [ -f "$SOUNDS_FLAG" ] && [ -f "$SNAPSHOT" ] && command -v afplay >/dev/null 2
       F\ *) new_f=1 ;;
       R\ *) new_r=1 ;;
       C\ *) new_c=1 ;;
+      A\ *) new_a=1 ;;
     esac
   done <<<"$state_keys"
   # one sound per category per refresh, never a burst
   (( new_f )) && afplay "/System/Library/Sounds/Basso.aiff" >/dev/null 2>&1 &
   (( new_r )) && afplay "/System/Library/Sounds/Ping.aiff"  >/dev/null 2>&1 &
   (( new_c )) && afplay "/System/Library/Sounds/Pop.aiff"   >/dev/null 2>&1 &
+  (( new_a )) && afplay "/System/Library/Sounds/Glass.aiff" >/dev/null 2>&1 &
 fi
 printf '%s' "$state_keys" > "$SNAPSHOT"
 
@@ -443,6 +469,7 @@ title="🦊 "
 (( n_fail        > 0 )) && title+="❌${n_fail} "
 (( n_review      > 0 )) && title+="👀${n_review} "
 (( n_comment_mrs > 0 )) && title+="💬${n_comment_mrs} "
+(( n_approved    > 0 )) && title+="✅${n_approved} "
 if [ "$title" != "🦊 " ]; then
   echo "${title% }"
 else
@@ -468,6 +495,11 @@ fi
 if (( n_fail > 0 )); then
   echo "BROKEN BUILDS | size=10 color=$RED"
   for b in "${rows_fail[@]}"; do printf '%s\n' "$b"; done
+  echo "---"
+fi
+if (( n_approved > 0 )); then
+  echo "APPROVED — YOUR MRS | size=10 color=$GREEN"
+  for b in "${rows_approved[@]}"; do printf '%s\n' "$b"; done
   echo "---"
 fi
 if (( n_review > 0 || n_review_approved > 0 )); then
