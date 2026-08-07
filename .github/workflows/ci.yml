@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  commitlint:
+    name: Lint commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # Validate every commit in the PR against Conventional Commits, so the
+      # commit that lands on main carries the type semantic-release needs to
+      # decide the next version (feat -> minor, fix -> patch, etc.).
+      - name: Validate PR commits
+        run: npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+
+  test:
+    name: Shell checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The plugin is macOS/SwiftBar tooling and cannot be run meaningfully on a
+      # Linux runner (no menu bar, no Keychain), so CI checks what it can: that
+      # every script parses. Nothing here is bash 3.2 — that constraint is
+      # enforced by review, see CLAUDE.md.
+      - name: Check every script parses
+        run: |
+          for f in install.sh gitlab-radar.3m.sh; do
+            bash -n "$f" || exit 1
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check the npx wrapper parses
+        run: node --check bin/gitlab-radar.js

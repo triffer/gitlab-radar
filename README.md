@@ -59,11 +59,11 @@ menu bar:   🦊 ❌1 👀2 💬1 ✅1     (a dim 🦊 when all quiet)
 
 ## Install (Mac host)
 
-Requires `jq` and [SwiftBar](https://swiftbar.app):
+Requires `jq` and [SwiftBar](https://swiftbar.app) — npm cannot install those:
 
 ```bash
 brew install jq && brew install --cask swiftbar   # launch SwiftBar once, pick a plugin folder
-./gitlab-radar/install.sh
+npx github:triffer/gitlab-radar install
 ```
 
 The installer asks for your GitLab URL and a personal access token
@@ -73,11 +73,26 @@ The installer asks for your GitLab URL and a personal access token
 - scope **`read_api`** — read-only; the *mark done* actions silently do nothing
 
 It verifies the token, stores it in the Keychain, and copies the plugin into
-your SwiftBar plugin folder. Re-run it any time after pulling updates — config
-and token are kept. The first time SwiftBar reads the Keychain item, macOS
-prompts once: choose **Always Allow**.
+your SwiftBar plugin folder. The first time SwiftBar reads the Keychain item,
+macOS prompts once: choose **Always Allow**.
 
-Remove everything with `./gitlab-radar/install.sh --uninstall`.
+```bash
+npx github:triffer/gitlab-radar version     # what you have vs. what is installed
+npx github:triffer/gitlab-radar uninstall   # plugin, token and cache (keeps your config)
+```
+
+## Updates
+
+Re-run the installer — it keeps your config and token:
+
+```bash
+npx github:triffer/gitlab-radar install
+```
+
+The last row of the dropdown shows the version you are running and links to the
+[release list](https://github.com/triffer/gitlab-radar/releases), so you can see
+whether it is still the newest. (Being *told* about a new release, from a
+background check, is coming in a later version.)
 
 ## Configuration — `~/.config/gitlab-radar/config`
 
@@ -143,3 +158,16 @@ plugin invoking itself with `--seen` / `--todo-done` — no extra scripts.
 - **Comment counts look wrong after switching users** — read-markers are per
   note id in `~/.cache/gitlab-radar/seen-comments.json`; delete it to
   re-baseline (current comments are then treated as read, not replayed).
+
+## Contributing / releasing
+
+Commits on `main` follow [Conventional Commits](https://www.conventionalcommits.org)
+(`feat:`, `fix:`, `docs:`, `chore:` …) — CI rejects a PR whose commits don't, because
+the type is what decides the next version. On every push to `main`,
+[semantic-release](https://semantic-release.gitbook.io) works out that version from
+the commits, tags it, writes `CHANGELOG.md` and `package.json`, and cuts a GitHub
+Release whose notes carry the `npx …#v<version> install` line. Nothing is published
+to npm — the git tag *is* the release artifact, which is what `npx github:…` installs.
+
+Bump nothing by hand: `package.json` says `0.0.0-development` in the repo and
+semantic-release owns the real number.

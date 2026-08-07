@@ -1,0 +1,47 @@
+{
+  "name": "gitlab-radar",
+  "version": "0.0.0-development",
+  "description": "Broken pipelines, review requests and new MR comments from GitLab in your macOS menu bar (SwiftBar).",
+  "bin": {
+    "gitlab-radar": "bin/gitlab-radar.js"
+  },
+  "files": [
+    "bin",
+    "install.sh",
+    "gitlab-radar.3m.sh",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bash -n install.sh gitlab-radar.3m.sh",
+    "release": "semantic-release"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "gitlab",
+    "merge-requests",
+    "pipelines",
+    "swiftbar",
+    "menubar",
+    "macos"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triffer/gitlab-radar.git"
+  },
+  "homepage": "https://github.com/triffer/gitlab-radar#readme",
+  "bugs": {
+    "url": "https://github.com/triffer/gitlab-radar/issues"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^10.0.1",
+    "semantic-release": "^24.2.1"
+  }
+}

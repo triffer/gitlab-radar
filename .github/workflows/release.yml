@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Avoid two releases racing if commits land close together.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create tags/releases and push the changelog + version bump
+  issues: write # comment on released issues
+  pull-requests: write # comment on released PRs
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false # let semantic-release use GITHUB_TOKEN for the push
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      # semantic-release derives the version from Conventional Commits, tags it,
+      # updates CHANGELOG.md + package.json, and creates a GitHub Release. It does
+      # NOT publish to npm (npmPublish is false) — the tool ships via
+      # `npx github:triffer/gitlab-radar`, so the git tag is the release artifact.
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
