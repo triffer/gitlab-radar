@@ -83,16 +83,24 @@ npx github:triffer/gitlab-radar uninstall   # plugin, token and cache (keeps you
 
 ## Updates
 
-Re-run the installer — it keeps your config and token:
+The radar checks GitHub for a new release once a day (`UPDATE_CHECK_HOURS`,
+`0` disables it) and shows the result in the last row of the dropdown:
 
-```bash
-npx github:triffer/gitlab-radar install
+```
+⬆ GitLab Radar 1.2.0 available — read the release notes
+↳ you have v1.1.0 · copy the update command
 ```
 
-The last row of the dropdown shows the version you are running and links to the
-[release list](https://github.com/triffer/gitlab-radar/releases), so you can see
-whether it is still the newest. (Being *told* about a new release, from a
-background check, is coming in a later version.)
+Clicking never upgrades anything — the installer is interactive (it may ask for
+a token) and a menu bar plugin is the wrong place to hide a prompt. The second
+row puts the right command on your clipboard (`npx github:…#v1.2.0 install`, or
+`git pull && ./install.sh` if you installed from a checkout) and you run it
+where you can see it. Re-running the installer keeps your config and token.
+
+Without an update pending, the same row just shows the installed version and
+links to the releases page; ⌥-click checks for updates on the spot. The check
+runs detached from the refresh, so a slow or absent network never delays the
+menu bar.
 
 ## Configuration — `~/.config/gitlab-radar/config`
 
@@ -103,6 +111,7 @@ background check, is coming in a later version.)
 | `WATCH_MAIN_PROJECTS`   | *(empty)*            | Extra projects to watch, space separated: `group/project` (default branch) or `group/project:branch` |
 | `MAX_TODOS`             | `8`                  | Max to-do rows in the dropdown                      |
 | `TOKEN_WARN_DAYS`       | `21`                 | Warn (and offer one-click rotation) this many days before the token expires |
+| `UPDATE_CHECK_HOURS`    | `24`                 | How often to ask GitHub for a newer release (`0` = never; ⌥-click still checks on demand) |
 | `GITLAB_TOKEN`          | *(unset)*            | Escape hatch: token in the config instead of the Keychain (not recommended) |
 
 The file is plain bash, sourced by the plugin. The refresh interval is encoded
@@ -141,9 +150,10 @@ One script, three API queries per refresh plus a few small calls per open MR:
 | New comments              | per-MR `GET /notes` (your MRs + MRs you're reviewing, even once approved), diffed against a local last-seen note id |
 | Mentions / replies / etc. | `GET /todos` (pending)                                        |
 
-State (read-markers, project cache, sound snapshot) lives in
-`~/.cache/gitlab-radar/`. Menu actions (mark read, mark to-do done) are the
-plugin invoking itself with `--seen` / `--todo-done` — no extra scripts.
+State (read-markers, project cache, sound snapshot, last update check) lives in
+`~/.cache/gitlab-radar/`. Menu actions (mark read, mark to-do done, check for a
+new release, copy the update command) are the plugin invoking itself with
+`--seen` / `--todo-done` / `--check-update` / … — no extra scripts.
 
 ## Troubleshooting
 
