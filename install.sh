@@ -92,17 +92,33 @@ MAX_TODOS=8
 # one-click rotation via the API.
 TOKEN_WARN_DAYS=21
 
+# How often the radar asks GitHub whether a newer GitLab Radar was released.
+# 0 turns the check off; ⌥-clicking the version row still checks on demand.
+UPDATE_CHECK_HOURS=24
+
 # Escape hatch: set GITLAB_TOKEN here to skip the Keychain (not recommended).
 #GITLAB_TOKEN=""
 EOF
   info "config created: $CONF"
 else
   # Upgrade path: append keys this version introduced, keep everything else.
+  added=""
   if ! grep -q '^TOKEN_WARN_DAYS=' "$CONF"; then
     printf '\n# Warn this many days before the access token expires (one-click rotate).\nTOKEN_WARN_DAYS=21\n' >> "$CONF"
-    info "config upgraded: TOKEN_WARN_DAYS added"
+    added="$added TOKEN_WARN_DAYS"
   fi
-  info "config kept: $CONF"
+  if ! grep -q '^UPDATE_CHECK_HOURS=' "$CONF"; then
+    printf '\n# How often to check GitHub for a newer GitLab Radar (0 = never).\nUPDATE_CHECK_HOURS=24\n' >> "$CONF"
+    added="$added UPDATE_CHECK_HOURS"
+  fi
+  # `added` is a string, not an array: this script runs under `set -u` and macOS
+  # ships bash 3.2, where expanding an EMPTY array counts as an unbound variable
+  # and would abort the installer on the common no-op path.
+  if [ -n "$added" ]; then
+    info "config upgraded:$added added"
+  else
+    info "config kept: $CONF"
+  fi
 fi
 
 # 2. Token in the Keychain ------------------------------------------------------
