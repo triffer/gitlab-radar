@@ -1,1 +1,9 @@
+# editors / IDEs
 .idea
+
+# macOS
+.DS_Store
+
+# npm
+node_modules/
+*.tgz

@@ -16,7 +16,8 @@
 #
 # Written for the stock macOS bash 3.2 — no associative arrays, no ${var,,}.
 
-CONF="$HOME/.config/gitlab-radar/config"
+CONF_DIR="$HOME/.config/gitlab-radar"
+CONF="$CONF_DIR/config"
 STATE_DIR="$HOME/.cache/gitlab-radar"
 mkdir -p "$STATE_DIR"
 [ -f "$CONF" ] && . "$CONF" 2>/dev/null
@@ -42,7 +43,8 @@ ME_CACHE="$STATE_DIR/me"
 [ -f "$PROJ_CACHE" ] || echo '{}' > "$PROJ_CACHE"
 
 # Absolute path to this script, for self-invoking menu actions (mark read, …).
-SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
 
 if [ -n "${GITLAB_TOKEN:-}" ]; then
   TOKEN="$GITLAB_TOKEN"; TOKEN_SRC="config"
@@ -81,6 +83,35 @@ diff_new_comments() { # $1 = notes json; uses global $key; sets cur_max/new_n/ne
 notify() { # macOS notification for feedback from menu actions
   command -v osascript >/dev/null 2>&1 && \
     osascript -e "display notification \"$1\" with title \"GitLab Radar\"" 2>/dev/null
+}
+
+# ---- which version is installed -------------------------------------------------
+# Releases are cut by semantic-release, so the only version that exists is the
+# one in package.json at install time — and this file ends up in SwiftBar's
+# plugin folder, nowhere near it. install.sh stamps what it installed into
+# installed.sh beside the config, which is where we read it back from. Sourced
+# AFTER the config on purpose: that file is user-edited bash, and reading the
+# stamp last means a stray assignment in it cannot shadow the real version.
+GITLAB_RADAR_REPO="triffer/gitlab-radar"
+GITLAB_RADAR_VERSION=""
+if [ -r "$CONF_DIR/installed.sh" ]; then
+  . "$CONF_DIR/installed.sh" 2>/dev/null
+elif [ -r "$SELF_DIR/package.json" ]; then
+  # No stamp: we are running straight from a checkout, next to its package.json.
+  # Report what that checkout would install.
+  GITLAB_RADAR_VERSION=$(jq -r '.version // ""' "$SELF_DIR/package.json" 2>/dev/null || true)
+fi
+
+# The version gets pasted into menu markup and names a release URL. Rather than
+# escape it everywhere, nothing that isn't a plain MAJOR.MINOR.PATCH is treated
+# as a version at all — which is exactly what semantic-release produces for this
+# repo. Anything else (an unstamped checkout, a hand-edited stamp) shows as "dev".
+version_sane() { # $1: version
+  case "${1:-}" in
+    *[!0-9.]*|'') return 1 ;;
+    *.*.*)        return 0 ;;
+    *)            return 1 ;;
+  esac
 }
 
 # ---- menu action mode (SwiftBar invokes us with arguments, refresh=true) ----
@@ -126,7 +157,7 @@ if [ -z "$TOKEN" ]; then
   echo "🦊 | color=$DIM"
   echo "---"
   echo "GitLab Radar is not set up | color=$ORANGE"
-  echo "Run gitlab-radar/install.sh from the workbench repo | color=$GRAY"
+  echo "Run: npx github:triffer/gitlab-radar install | color=$GRAY"
   echo "It stores your token in the Keychain (service: gitlab-radar) | size=11 color=$GRAY"
   exit 0
 fi
@@ -537,3 +568,12 @@ else
   echo "🔕 Sounds off — click to enable | bash=/usr/bin/touch param1=\"$SOUNDS_FLAG\" terminal=false refresh=true"
 fi
 echo "Edit config | bash=/usr/bin/open param1=-t param2=\"$CONF\" terminal=false"
+
+# ---- what this is ----------------------------------------------------------------
+# The last row is where the radar says which version you are running, linking to
+# the release list so you can see whether it is still the newest. Telling you
+# that itself — a background check against GitHub — is the next iteration.
+v="${GITLAB_RADAR_VERSION:-}"
+version_sane "$v" || v="dev"
+echo "---"
+echo "GitLab Radar v$v | size=11 color=$GRAY href=https://github.com/$GITLAB_RADAR_REPO/releases"
