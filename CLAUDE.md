@@ -58,7 +58,9 @@ and never write `CHANGELOG.md` by hand; both are release-time artifacts.
 
 - Commit messages must be conventional (`feat:`, `fix:`, `docs:`, `chore:` …);
   `.github/workflows/ci.yml` runs commitlint over every commit in a PR and
-  `bash -n` over the shell scripts.
+  `bash -n` over the shell scripts. Dependabot's own commits are exempt
+  (`ignores` in `commitlint.config.js`): it writes a `Bump x and y` header and
+  compare links longer than the 100-column body limit on one line.
 - `.github/workflows/release.yml` runs on push to `main`: tag, changelog,
   `package.json` bump, GitHub Release. Nothing is published to npm
   (`npmPublish: false`) — the **git tag is the release artifact**, because
