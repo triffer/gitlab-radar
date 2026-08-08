@@ -286,6 +286,37 @@ pipe_icon() {
   esac
 }
 
+# Why GitLab says this MR cannot be merged, in one line. GitLab reports exactly
+# one reason — the first blocker it hits — so this is a headline, not a
+# checklist: an MR that both conflicts and has open threads only ever says
+# "conflict". That is why blocking_discussions_resolved is still read separately.
+# detailed_merge_status arrived in GitLab 15.6; older instances fall back to the
+# coarse merge_status, which only knows yes/no. Anything unrecognised (a status
+# a newer GitLab invented) says nothing rather than guessing.
+merge_blocker() { # $1 = detailed_merge_status, or the older merge_status
+  case "$1" in
+    # mergeable, or GitLab is still working it out — saying anything here would
+    # just flicker between refreshes.
+    mergeable|can_be_merged|'')                  echo "" ;;
+    checking|unchecked|preparing|approvals_syncing|cannot_be_merged_recheck) echo "" ;;
+    conflict)                 echo "⚠️ conflicts with the target branch" ;;
+    need_rebase)              echo "⚠️ needs a rebase" ;;
+    discussions_not_resolved) echo "⚠️ unresolved threads block merging" ;;
+    draft_status)             echo "📝 still a draft — mark it ready" ;;
+    not_approved)             echo "✍️ waiting for approvals" ;;
+    requested_changes)        echo "🔁 a reviewer requested changes" ;;
+    ci_must_pass)             echo "⚠️ the pipeline has to pass first" ;;
+    ci_still_running)         echo "⏳ waiting for the pipeline" ;;
+    merge_time)               echo "⏳ held until its scheduled merge time" ;;
+    merge_request_blocked)    echo "⛔️ blocked by another merge request" ;;
+    status_checks_must_pass)  echo "⚠️ external status checks have to pass" ;;
+    jira_association_missing) echo "⚠️ needs a Jira issue in the title or branch" ;;
+    policies_denied)          echo "⛔️ blocked by a security policy" ;;
+    cannot_be_merged)         echo "⚠️ cannot be merged — conflicts?" ;;
+    *)                        echo "" ;;
+  esac
+}
+
 # ---- who am I (cached for a day) ---------------------------------------------
 me=""
 if [ -f "$ME_CACHE" ]; then
@@ -350,12 +381,18 @@ while IFS= read -r mr; do
   key="$pid:$iid"
 
   detail=$(api "projects/$pid/merge_requests/$iid") || detail=""
-  p_status="none"; p_url=""; threads_ok="true"
+  p_status="none"; p_url=""; threads_ok="true"; mstatus=""
   if [ -n "$detail" ]; then
     eval "$(jq -r '@sh "p_status=\(.head_pipeline.status // "none")
       p_url=\(.head_pipeline.web_url // "")
+      mstatus=\(.detailed_merge_status // .merge_status // "")
       threads_ok=\(if .blocking_discussions_resolved == false then "false" else "true" end)"' <<<"$detail")"
   fi
+  blocker=$(merge_blocker "$mstatus")
+  # On the MR row the 📝 badge already says "draft", so the blocker line would
+  # only repeat it. It stays on the approved row, which carries no badge.
+  row_blocker="$blocker"
+  [ "$mstatus" = "draft_status" ] && (( draft )) && row_blocker=""
 
   # new comments from others since last seen (baseline silently on first sight)
   notes=$(api "projects/$pid/merge_requests/$iid/notes?per_page=100&sort=desc") || notes="[]"
@@ -366,7 +403,13 @@ while IFS= read -r mr; do
   row="$picon $draft_badge$ref $title | href=$url size=13"
   row+=$'\n'"-- → $target · updated $(age_str $(( now - upd ))) ago | size=11 color=$GRAY"
   [ -n "$p_url" ] && row+=$'\n'"-- pipeline: $p_status | href=$p_url size=11 color=$GRAY"
-  [ "$threads_ok" != "true" ] && row+=$'\n'"-- ⚠️ unresolved threads block merging | size=11 color=$ORANGE"
+  [ -n "$row_blocker" ] && row+=$'\n'"-- $row_blocker | size=11 color=$ORANGE"
+  # Second opinion on threads: merge_blocker() names one reason only, so an MR
+  # that conflicts AND has open threads would otherwise never mention them.
+  # Skipped when the blocker line already said exactly this.
+  if [ "$threads_ok" != "true" ] && [ "$mstatus" != "discussions_not_resolved" ]; then
+    row+=$'\n'"-- ⚠️ unresolved threads block merging | size=11 color=$ORANGE"
+  fi
 
   if (( new_n > 0 )); then
     (( n_comment_mrs++ ))
@@ -396,7 +439,9 @@ while IFS= read -r mr; do
     appr_names=$(sanitize "$appr_names")
     arow="✅ $ref — approved by $appr_names | href=$url size=13"
     arow+=$'\n'"-- $title | size=11 color=$GRAY"
-    if [ "$threads_ok" != "true" ]; then
+    if [ -n "$blocker" ]; then
+      arow+=$'\n'"-- $blocker | size=11 color=$ORANGE"
+    elif [ "$threads_ok" != "true" ]; then
       arow+=$'\n'"-- ⚠️ unresolved threads still block merging | size=11 color=$ORANGE"
     else
       arow+=$'\n'"-- ready to merge | size=11 color=$GREEN"
