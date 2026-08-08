@@ -45,7 +45,9 @@ npx github:triffer/gitlab-radar uninstall   # plugin, token and cache (keeps you
 
 - ❌ Failed head pipelines on your open MRs, plus failed pipelines on watched
   default branches. By default the radar watches the default branch of every
-  project you have an open MR in; add more with `WATCH_MAIN_PROJECTS`.
+  project you have an open MR in; add more with `WATCH_MAIN_PROJECTS`. Drafts
+  are exempt: red CI on work in progress is expected, so it stays on the MR row
+  but never lights up the menu bar.
 - 👀 Open MRs where you are a reviewer and haven't approved yet. Approving
   removes the MR from the list until the author re-requests your review, which
   brings it back badged 🔁 ✓→. A plain 🔁 is a pending *review requested* to-do.
@@ -53,12 +55,17 @@ npx github:triffer/gitlab-radar uninstall   # plugin, token and cache (keeps you
   ones you review. That includes plain replies after you approved, which
   GitLab's to-do list ignores unless someone `@mention`s you. Clicking opens the
   exact comment and marks it read; ⌥-click only marks it read.
-- ✅ Your open MRs that someone else approved, so you know they are ready to
-  merge. GitLab creates no to-do for this, so the radar reads each MR's
-  approvals itself. Unresolved threads get a warning.
+- ✅ Your open MRs that someone else approved. GitLab creates no to-do for this,
+  so the radar reads each MR's approvals itself. "Ready to merge" is only
+  claimed when GitLab agrees: a project that requires two approvals and got one
+  says *1 more approval(s) needed* instead.
 - 📋 Your pending GitLab to-dos: mentions, replies, "cannot be merged", approval
   requests, assignments. Each row has a *mark done* action.
-- 📄 All your open MRs with pipeline state and target branch.
+- 📄 All your open MRs with pipeline state, target branch and — when GitLab
+  refuses to merge one — the reason: conflicts, needs a rebase, waiting for
+  approvals, changes requested, blocked by another MR, unresolved threads.
+  GitLab names one blocker at a time, so it is a headline, not a checklist.
+  Drafts are badged 📝 and lose the redundant `Draft:` prefix.
 
 Sounds are off by default. The 🔕/🔔 row turns them on: one system sound per new
 event category per refresh (Basso for a broken build, Ping for a review request,
@@ -128,7 +135,8 @@ One bash script, a few API calls per refresh:
 |-----------------------|---------------------------------------------------------------|
 | Broken pipelines      | `GET /merge_requests?scope=created_by_me&state=opened` → per-MR `head_pipeline.status`, plus `GET /projects/:id/pipelines?ref=<default>` for watched projects (project metadata cached 24 h) |
 | Review requests       | `GET /merge_requests?reviewer_username=<you>&state=opened`, minus MRs you approved (per-MR `GET /approvals`, since the `approved_by` filter is Premium-only) |
-| Approvals on your MRs | per-MR `GET /approvals` → `approved_by`, others only           |
+| Approvals on your MRs | per-MR `GET /approvals` → `approved_by` (others only), plus `approvals_required`/`approvals_left` for the "ready to merge" verdict |
+| Why an MR is stuck    | per-MR detail → `detailed_merge_status` (GitLab ≥ 15.6; older instances fall back to the coarse `merge_status`) |
 | New comments          | per-MR `GET /notes`, diffed against a locally stored last-seen note id |
 | To-dos and 🔁 badges  | `GET /todos`, pending only                                    |
 
