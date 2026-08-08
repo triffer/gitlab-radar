@@ -332,8 +332,14 @@ pending_pairs=""  # "key<TAB>maxid" lines -> pending-max.json for --seen-all
 # ---- my open MRs: pipeline status + new comments -----------------------------
 while IFS= read -r mr; do
   [ -n "$mr" ] || continue
+  # The "Draft:"/"WIP:" prefix is stripped from the title and shown as a badge
+  # instead: the same word in every row costs width and says nothing the icon
+  # cannot. .draft is the modern field, .work_in_progress the old one, and the
+  # title test covers instances that expose neither.
   eval "$(jq -r '@sh "pid=\(.project_id) iid=\(.iid)
-    title=\(.title // "?")
+    title=\((.title // "?") | sub("^ *(Draft|WIP) *: *"; ""; "i"))
+    draft=\(if (.draft // .work_in_progress // false)
+              or ((.title // "") | test("^ *(Draft|WIP) *:"; "i")) then 1 else 0 end)
     url=\(.web_url // "")
     full=\(.references.full // "")
     target=\(.target_branch // "")
@@ -356,7 +362,8 @@ while IFS= read -r mr; do
   diff_new_comments "$notes"
 
   picon=$(pipe_icon "$p_status")
-  row="$picon $ref $title | href=$url size=13"
+  draft_badge=""; (( draft )) && draft_badge="📝 "
+  row="$picon $draft_badge$ref $title | href=$url size=13"
   row+=$'\n'"-- → $target · updated $(age_str $(( now - upd ))) ago | size=11 color=$GRAY"
   [ -n "$p_url" ] && row+=$'\n'"-- pipeline: $p_status | href=$p_url size=11 color=$GRAY"
   [ "$threads_ok" != "true" ] && row+=$'\n'"-- ⚠️ unresolved threads block merging | size=11 color=$ORANGE"
@@ -400,12 +407,19 @@ while IFS= read -r mr; do
   fi
 
   if [ "$p_status" = "failed" ]; then
-    (( n_fail++ ))
-    frow="❌ $ref — pipeline failed | href=${p_url:-$url} size=13"
-    frow+=$'\n'"-- $title | size=11 color=$GRAY"
-    frow+=$'\n'"-- open MR instead | alternate=true size=11 href=$url"
-    rows_fail+=("$frow")
-    state_keys+="F mr:$key"$'\n'
+    if (( draft )); then
+      # Red CI on a draft is work in progress, not news. It stays visible on the
+      # MR row — with its pipeline link right above — but never lights up the
+      # menu bar and never makes a sound.
+      row+=$'\n'"-- ❌ pipeline failed — not counted while this is a draft | size=11 color=$DIM"
+    else
+      (( n_fail++ ))
+      frow="❌ $ref — pipeline failed | href=${p_url:-$url} size=13"
+      frow+=$'\n'"-- $title | size=11 color=$GRAY"
+      frow+=$'\n'"-- open MR instead | alternate=true size=11 href=$url"
+      rows_fail+=("$frow")
+      state_keys+="F mr:$key"$'\n'
+    fi
   fi
 
   rows_mymr+=("$row")
@@ -415,7 +429,9 @@ done < <(jq -c '.[]' <<<"$mrs" 2>/dev/null)
 while IFS= read -r mr; do
   [ -n "$mr" ] || continue
   eval "$(jq -r '@sh "pid=\(.project_id) iid=\(.iid)
-    title=\(.title // "?")
+    title=\((.title // "?") | sub("^ *(Draft|WIP) *: *"; ""; "i"))
+    draft=\(if (.draft // .work_in_progress // false)
+              or ((.title // "") | test("^ *(Draft|WIP) *:"; "i")) then 1 else 0 end)
     url=\(.web_url // "")
     full=\(.references.full // "")
     author=\(.author.name // "?")
@@ -470,6 +486,7 @@ while IFS= read -r mr; do
   (( n_review++ ))
   badge=""; [ -n "$todo_id" ] && badge="🔁 "
   [ "$approved" = "true" ] && [ -n "$todo_id" ] && badge="🔁 ✓→ "   # you approved, but review was re-requested
+  (( draft )) && badge="$badge📝 "   # asked for early feedback — read it as such
   rrow="👀 $badge$ref $author — $title | href=$url size=13"
   if [ -n "$todo_id" ]; then
     rrow+=$'\n'"-- review (re-)requested $(age_str $(( now - todo_ts ))) ago | size=11 color=$ORANGE"
