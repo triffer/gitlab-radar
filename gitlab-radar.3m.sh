@@ -29,6 +29,8 @@ WATCH_MR_TARGET_MAINS="${WATCH_MR_TARGET_MAINS:-1}"
 WATCH_MAIN_PROJECTS="${WATCH_MAIN_PROJECTS:-}"
 MAX_TODOS="${MAX_TODOS:-8}"
 TOKEN_WARN_DAYS="${TOKEN_WARN_DAYS:-21}"
+UPDATE_CHECK_HOURS="${UPDATE_CHECK_HOURS:-24}"
+case "$UPDATE_CHECK_HOURS" in ''|*[!0-9]*) UPDATE_CHECK_HOURS=24 ;; esac
 
 RED="#ff453a"; ORANGE="#ff9f0a"; GREEN="#32d74b"; BLUE="#0a84ff"; GRAY="#8e8e93"; DIM="#6e6e73"
 TAB=$'\t'
@@ -39,6 +41,7 @@ SNAPSHOT="$STATE_DIR/last-state"
 SOUNDS_FLAG="$STATE_DIR/sounds-on"
 PROJ_CACHE="$STATE_DIR/projects.json"
 ME_CACHE="$STATE_DIR/me"
+UPDATE_CACHE="$STATE_DIR/update.json"
 [ -f "$SEEN" ] || echo '{}' > "$SEEN"
 [ -f "$PROJ_CACHE" ] || echo '{}' > "$PROJ_CACHE"
 
@@ -85,7 +88,7 @@ notify() { # macOS notification for feedback from menu actions
     osascript -e "display notification \"$1\" with title \"GitLab Radar\"" 2>/dev/null
 }
 
-# ---- which version is installed -------------------------------------------------
+# ---- which version is installed, and is a newer one out --------------------------
 # Releases are cut by semantic-release, so the only version that exists is the
 # one in package.json at install time — and this file ends up in SwiftBar's
 # plugin folder, nowhere near it. install.sh stamps what it installed into
@@ -94,24 +97,105 @@ notify() { # macOS notification for feedback from menu actions
 # stamp last means a stray assignment in it cannot shadow the real version.
 GITLAB_RADAR_REPO="triffer/gitlab-radar"
 GITLAB_RADAR_VERSION=""
+GITLAB_RADAR_INSTALL_METHOD=""
+GITLAB_RADAR_INSTALL_SOURCE=""
 if [ -r "$CONF_DIR/installed.sh" ]; then
   . "$CONF_DIR/installed.sh" 2>/dev/null
 elif [ -r "$SELF_DIR/package.json" ]; then
   # No stamp: we are running straight from a checkout, next to its package.json.
   # Report what that checkout would install.
   GITLAB_RADAR_VERSION=$(jq -r '.version // ""' "$SELF_DIR/package.json" 2>/dev/null || true)
+  GITLAB_RADAR_INSTALL_METHOD="git"
+  GITLAB_RADAR_INSTALL_SOURCE="$SELF_DIR"
 fi
 
-# The version gets pasted into menu markup and names a release URL. Rather than
-# escape it everywhere, nothing that isn't a plain MAJOR.MINOR.PATCH is treated
-# as a version at all — which is exactly what semantic-release produces for this
-# repo. Anything else (an unstamped checkout, a hand-edited stamp) shows as "dev".
+# Versions come off the network, get pasted into menu markup and name a release
+# URL. Rather than escape them everywhere, nothing that isn't a plain
+# MAJOR.MINOR.PATCH is treated as a version at all — which is exactly what
+# semantic-release produces for this repo. Anything else (an unstamped checkout,
+# a hand-edited stamp) shows as "dev" and never claims an update is waiting.
 version_sane() { # $1: version
   case "${1:-}" in
     *[!0-9.]*|'') return 1 ;;
     *.*.*)        return 0 ;;
     *)            return 1 ;;
   esac
+}
+
+version_newer() { # $1: candidate  $2: baseline — true when $1 > $2
+  version_sane "${1:-}" || return 1
+  version_sane "${2:-}" || return 1
+  local a1 a2 a3 b1 b2 b3 rest i x y
+  IFS=. read -r a1 a2 a3 rest <<<"$1"
+  IFS=. read -r b1 b2 b3 rest <<<"$2"
+  for i in 1 2 3; do
+    case $i in
+      1) x=$a1; y=$b1 ;;
+      2) x=$a2; y=$b2 ;;
+      *) x=$a3; y=$b3 ;;
+    esac
+    # 10# so a zero-padded field is still read as decimal, not octal.
+    x=$(( 10#${x:-0} )); y=$(( 10#${y:-0} ))
+    (( x > y )) && return 0
+    (( x < y )) && return 1
+  done
+  return 1
+}
+
+release_url() { # $1: version, or empty for the release list
+  if version_sane "${1:-}"; then
+    printf 'https://github.com/%s/releases/tag/v%s' "$GITLAB_RADAR_REPO" "$1"
+  else
+    printf 'https://github.com/%s/releases' "$GITLAB_RADAR_REPO"
+  fi
+}
+
+# The line that upgrades THIS install, for the clipboard. The radar never
+# installs itself — it hands you the command and you run it where you can see
+# it, because the installer is interactive (it may ask for a token) and a menu
+# bar plugin is the wrong place to hide a prompt. A checkout pulls; anything
+# else re-runs npx pinned at the release, the same line the release notes carry.
+update_command() { # $1: version to move to
+  if [ "${GITLAB_RADAR_INSTALL_METHOD:-}" = "git" ] && [ -d "${GITLAB_RADAR_INSTALL_SOURCE:-}/.git" ]; then
+    printf 'cd "%s" && git pull && ./install.sh' "$GITLAB_RADAR_INSTALL_SOURCE"
+  elif version_sane "${1:-}"; then
+    printf 'npx github:%s#v%s install' "$GITLAB_RADAR_REPO" "$1"
+  else
+    printf 'npx github:%s install' "$GITLAB_RADAR_REPO"
+  fi
+}
+
+# Everything we know about upstream: the newest release seen and when we last
+# asked. Missing, unreadable or corrupt all read back as "never checked".
+update_cache_read() { # sets LATEST_VERSION LAST_CHECKED
+  LATEST_VERSION=""; LAST_CHECKED=0
+  [ -r "$UPDATE_CACHE" ] || return 0
+  eval "$(jq -r '@sh "LATEST_VERSION=\(.latest // "")
+    LAST_CHECKED=\(.checked // 0)"' "$UPDATE_CACHE" 2>/dev/null)"
+  version_sane "$LATEST_VERSION" || LATEST_VERSION=""
+  case "$LAST_CHECKED" in ''|*[!0-9]*) LAST_CHECKED=0 ;; esac
+  return 0
+}
+
+update_cache_write() { # $1: latest  $2: checked
+  local checked="${2:-0}" tmp
+  case "$checked" in ''|*[!0-9]*) checked=0 ;; esac   # --argjson aborts on junk
+  tmp="$UPDATE_CACHE.tmp"
+  jq -n --arg l "${1:-}" --argjson c "$checked" '{latest: $l, checked: $c}' > "$tmp" 2>/dev/null &&
+    mv "$tmp" "$UPDATE_CACHE"
+}
+
+# Ask GitHub for the newest release and record it. Short-fused and silent on
+# purpose: this normally runs detached from a menu bar refresh, where a slow or
+# absent network must cost nothing more than a "latest" that stays as it was.
+update_fetch() { # $1: unix time
+  local when="${1:-}" body tag
+  case "$when" in ''|*[!0-9]*) when=$(date +%s) ;; esac
+  body=$(curl -fsS --max-time 8 -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/$GITLAB_RADAR_REPO/releases/latest" 2>/dev/null) || return 1
+  tag=$(jq -r '.tag_name // ""' <<<"$body" 2>/dev/null)
+  version_sane "${tag#v}" || return 1
+  update_cache_write "${tag#v}" "$when"
 }
 
 # ---- menu action mode (SwiftBar invokes us with arguments, refresh=true) ----
@@ -146,6 +230,19 @@ case "${1:-}" in
                 fi
                 exit 0 ;;
   --todo-done)  api_post "todos/$2/mark_as_done" || true; exit 0 ;;
+  --check-update)
+                # The ⌥-click on the version row: ask GitHub now rather than
+                # waiting for the next UPDATE_CHECK_HOURS window. Synchronous,
+                # so SwiftBar's refresh=true repaints with the answer.
+                update_fetch "$(date +%s)" || notify "Update check failed — GitHub unreachable?"
+                exit 0 ;;
+  --copy-update)
+                # Hand over the upgrade command instead of running it; see
+                # update_command() for why the radar never installs itself.
+                update_cache_read
+                update_command "$LATEST_VERSION" | pbcopy
+                notify "Update command copied to the clipboard"
+                exit 0 ;;
 esac
 
 # ---- preconditions -----------------------------------------------------------
@@ -493,6 +590,20 @@ if [ -f "$SOUNDS_FLAG" ] && [ -f "$SNAPSHOT" ] && command -v afplay >/dev/null 2
 fi
 printf '%s' "$state_keys" > "$SNAPSHOT"
 
+# ---- is a newer release out? -----------------------------------------------------
+# Never checked inline: this render already waits on a handful of GitLab calls,
+# and GitHub being slow must not delay the menu bar on top of that. We read the
+# cache, and at most once per UPDATE_CHECK_HOURS spawn a detached fetch whose
+# result the *next* refresh renders.
+update_cache_read
+if (( UPDATE_CHECK_HOURS > 0 )) && (( now - LAST_CHECKED >= UPDATE_CHECK_HOURS * 3600 )); then
+  # Stamp the cache BEFORE fetching, not after: a machine that is offline (or a
+  # GitHub that is rate limiting) must cost one attempt per window, not one
+  # every three minutes.
+  update_cache_write "$LATEST_VERSION" "$now"
+  ( update_fetch "$now" ) >/dev/null 2>&1 &
+fi
+
 # ---- menu bar title ------------------------------------------------------------
 # The 🦊 prefix is always there, so the radar stays tellable-apart from other
 # SwiftBar plugins even when counts light up.
@@ -569,11 +680,20 @@ else
 fi
 echo "Edit config | bash=/usr/bin/open param1=-t param2=\"$CONF\" terminal=false"
 
-# ---- what this is ----------------------------------------------------------------
-# The last row is where the radar says which version you are running, linking to
-# the release list so you can see whether it is still the newest. Telling you
-# that itself — a background check against GitHub — is the next iteration.
+# ---- what this is, and whether it is current -------------------------------------
+# The last row is where the radar says what it is: which version you are running
+# and — when there is one — the newer one, as a link to its release notes, which
+# carry the command that installs it. ⌥-click checks on demand, which is also
+# the only check left when UPDATE_CHECK_HOURS=0.
 v="${GITLAB_RADAR_VERSION:-}"
 version_sane "$v" || v="dev"
 echo "---"
-echo "GitLab Radar v$v | size=11 color=$GRAY href=https://github.com/$GITLAB_RADAR_REPO/releases"
+# Both halves have to be real versions, so an unstamped checkout or a failed
+# check simply never claims an update is waiting.
+if version_newer "$LATEST_VERSION" "$GITLAB_RADAR_VERSION"; then
+  echo "⬆ GitLab Radar $LATEST_VERSION available — read the release notes | color=$ORANGE size=12 href=$(release_url "$LATEST_VERSION")"
+  echo "↳ you have v$v · copy the update command | size=11 color=$GRAY bash=\"$SELF\" param1=--copy-update terminal=false"
+else
+  echo "GitLab Radar v$v | size=11 color=$GRAY href=$(release_url)"
+  echo "GitLab Radar v$v — check for updates now | alternate=true size=11 bash=\"$SELF\" param1=--check-update terminal=false refresh=true"
+fi

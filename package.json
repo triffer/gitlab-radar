@@ -1,6 +1,6 @@
 {
   "name": "gitlab-radar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Broken pipelines, review requests and new MR comments from GitLab in your macOS menu bar (SwiftBar).",
   "bin": {
     "gitlab-radar": "bin/gitlab-radar.js"

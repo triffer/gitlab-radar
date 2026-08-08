@@ -1,100 +1,111 @@
 # GitLab Radar
 
-A SwiftBar menu bar plugin that surfaces the GitLab events that otherwise only
-reach you by email: **broken pipelines**, **(re-)review requests**, and **new
-comments on your merge requests** — polled straight from the GitLab REST API.
-Free, no services, no webhooks, works with gitlab.com and self-hosted
-instances.
+A SwiftBar menu bar plugin for macOS that shows you the GitLab events which
+otherwise only arrive by email: failed pipelines, review requests, new comments
+on your merge requests, approvals. It polls the GitLab REST API directly. No
+server, no webhooks, works with gitlab.com and self-hosted instances.
 
 ```
-menu bar:   🦊 ❌1 👀2 💬1 ✅1     (a dim 🦊 when all quiet)
-             │  │   │   │   └─ MRs of yours that have been approved
-             │  │   │   └─ MRs of yours with unread comments
-             │  │   └─ MRs waiting for your review
-             │  └─ failed pipelines (your MRs + watched default branches)
-             └─ always visible, so the radar is easy to spot next to other plugins
+🦊 ❌1 👀2 💬1 ✅1
+│  │   │   │   └─ your MRs that someone approved
+│  │   │   └─ unread comments on MRs you wrote or review
+│  │   └─ MRs waiting for your review
+│  └─ failed pipelines (your MRs + watched default branches)
+└─ always visible, dimmed when everything is quiet
 ```
 
-## Features
+Every count has a section in the dropdown. Clicking a row opens the MR,
+pipeline or comment in the browser.
 
-- ❌ **Broken builds** — failed head pipelines on your open MRs, plus failed
-  default-branch pipelines. By default the radar watches the default branch of
-  every project you currently have an open MR in; add more via
-  `WATCH_MAIN_PROJECTS`. Click a row to open the failed pipeline.
-- 👀 **Review requests** — open MRs where you are a reviewer and haven't
-  approved yet. Once you approve, the MR drops out (a dim "already approved"
-  line keeps the count) — until the author re-requests your review, which
-  brings it back with a 🔁 ✓→ badge. A plain 🔁 badge means a pending *review
-  requested* to-do; the submenu shows how long ago and lets you mark it done.
-- 💬 **New comments** — notes from others since you last looked, on your own
-  MRs *and* on MRs you're reviewing (including replies after you've already
-  approved — GitLab's own to-do list only fires on an explicit `@mention`, so
-  a plain reply otherwise goes unnoticed). Shows author and snippet; clicking
-  opens the comment in the browser *and* marks it read; ⌥-click marks it read
-  without opening. Read-state is local (`~/.cache/gitlab-radar`), so it never
-  touches your GitLab to-do list.
-- ✅ **Approved MRs** — your own open MRs that someone else has approved, so you
-  know they're ready to merge (a "unresolved threads still block merging"
-  warning shows when they aren't). GitLab doesn't create a to-do when your MR is
-  approved, so the radar polls each MR's approvals directly. This mirrors live
-  state; the optional sound fires once per *new* approver.
-- 📋 **To-dos** — mentions, direct replies, "cannot be merged", approval
-  requests and assignments from your GitLab to-do list, each with a *mark done*
-  action.
-- 📄 **MR overview** — all your open MRs with pipeline state, target branch,
-  and an "unresolved threads block merging" warning.
-- 🔊 **Optional sounds** — off by default; the 🔕/🔔 toggle enables one system
-  sound per *new* event category (Basso = build broke, Ping = review
-  requested, Pop = new comment, Glass = MR approved). One sound per refresh,
-  never a burst.
-- 🔐 **Token lives in the macOS Keychain** (service `gitlab-radar`), not in a
-  dotfile.
-- 🔁 **Token rotation built in** — GitLab caps token lifetime at one year, so
-  the radar checks the expiry date daily and shows a warning row 21 days
-  before it runs out (`TOKEN_WARN_DAYS`). Clicking it rotates the token via
-  `POST /personal_access_tokens/self/rotate` (GitLab ≥ 16.10, scope `api`)
-  with a fresh one-year expiry and stores the new token in the Keychain —
-  no browser round-trip. ⌥-click (or older GitLab) opens the token settings
-  page for manual rotation instead.
+## Install
 
-## Install (Mac host)
-
-Requires `jq` and [SwiftBar](https://swiftbar.app) — npm cannot install those:
+You need `jq` and [SwiftBar](https://swiftbar.app) first, npm can install
+neither:
 
 ```bash
 brew install jq && brew install --cask swiftbar   # launch SwiftBar once, pick a plugin folder
 npx github:triffer/gitlab-radar install
 ```
 
-The installer asks for your GitLab URL and a personal access token
-(create one under *User settings → Access tokens*):
+The installer asks for your GitLab URL and a personal access token, created
+under *User settings → Access tokens*. Scope `api` gives you everything,
+including the *mark to-do done* actions; with `read_api` those actions silently
+do nothing.
 
-- scope **`api`** — everything works, including "mark to-do done"
-- scope **`read_api`** — read-only; the *mark done* actions silently do nothing
-
-It verifies the token, stores it in the Keychain, and copies the plugin into
-your SwiftBar plugin folder. The first time SwiftBar reads the Keychain item,
-macOS prompts once: choose **Always Allow**.
+The token goes into the macOS Keychain (service `gitlab-radar`), not a dotfile.
+The first time SwiftBar reads that Keychain item, macOS prompts once: choose
+**Always Allow**.
 
 ```bash
 npx github:triffer/gitlab-radar version     # what you have vs. what is installed
 npx github:triffer/gitlab-radar uninstall   # plugin, token and cache (keeps your config)
 ```
 
+## What it shows
+
+- ❌ Failed head pipelines on your open MRs, plus failed pipelines on watched
+  default branches. By default the radar watches the default branch of every
+  project you have an open MR in; add more with `WATCH_MAIN_PROJECTS`.
+- 👀 Open MRs where you are a reviewer and haven't approved yet. Approving
+  removes the MR from the list until the author re-requests your review, which
+  brings it back badged 🔁 ✓→. A plain 🔁 is a pending *review requested* to-do.
+- 💬 Notes from other people since you last looked, on your own MRs and on the
+  ones you review. That includes plain replies after you approved, which
+  GitLab's to-do list ignores unless someone `@mention`s you. Clicking opens the
+  exact comment and marks it read; ⌥-click only marks it read.
+- ✅ Your open MRs that someone else approved, so you know they are ready to
+  merge. GitLab creates no to-do for this, so the radar reads each MR's
+  approvals itself. Unresolved threads get a warning.
+- 📋 Your pending GitLab to-dos: mentions, replies, "cannot be merged", approval
+  requests, assignments. Each row has a *mark done* action.
+- 📄 All your open MRs with pipeline state and target branch.
+
+Sounds are off by default. The 🔕/🔔 row turns them on: one system sound per new
+event category per refresh (Basso for a broken build, Ping for a review request,
+Pop for a comment, Glass for an approval), never a burst.
+
+### How rows clear
+
+Pipelines, review requests, approvals and the MR list mirror GitLab, so they
+only disappear once the underlying state changes. There is deliberately no way
+to swipe away a red pipeline.
+
+Comments and to-dos are dismissable. Comment read-state is local, in
+`~/.cache/gitlab-radar/`, so marking something read never touches your GitLab
+to-do list. To-dos go through the API instead, which keeps that list in sync.
+
 ## Updates
 
-Re-run the installer — it keeps your config and token:
+The radar asks GitHub for a newer release once a day (`UPDATE_CHECK_HOURS`, `0`
+disables it) and puts the answer in the last row of the dropdown:
 
-```bash
-npx github:triffer/gitlab-radar install
+```
+⬆ GitLab Radar 1.2.0 available — read the release notes
+↳ you have v1.1.0 · copy the update command
 ```
 
-The last row of the dropdown shows the version you are running and links to the
-[release list](https://github.com/triffer/gitlab-radar/releases), so you can see
-whether it is still the newest. (Being *told* about a new release, from a
-background check, is coming in a later version.)
+Clicking never upgrades anything. The installer is interactive and may ask for a
+token, which is not something to hide behind a menu bar row. The second row
+copies the right command to your clipboard (`npx github:…#v1.2.0 install`, or
+`git pull && ./install.sh` if you installed from a checkout) so you run it where
+you can see it. Re-running the installer keeps your config and token.
 
-## Configuration — `~/.config/gitlab-radar/config`
+With no update pending, the row shows the version you are running and links to
+the releases page. ⌥-click checks on the spot. The check runs detached from the
+refresh, so a slow or missing network never delays the menu bar.
+
+## Token rotation
+
+GitLab caps token lifetime at one year. The radar checks the expiry date daily
+and shows a warning row 21 days before it runs out (`TOKEN_WARN_DAYS`). Clicking
+that row rotates the token via `POST /personal_access_tokens/self/rotate`, gives
+it a fresh one-year expiry and stores it in the Keychain, with no browser
+round-trip. That needs GitLab 16.10 or newer and scope `api`; ⌥-click, or an
+older GitLab, opens the token settings page for manual rotation.
+
+## Configuration
+
+`~/.config/gitlab-radar/config` is plain bash, sourced by the plugin.
 
 | Variable                | Default              | Meaning                                             |
 |-------------------------|----------------------|-----------------------------------------------------|
@@ -103,71 +114,50 @@ background check, is coming in a later version.)
 | `WATCH_MAIN_PROJECTS`   | *(empty)*            | Extra projects to watch, space separated: `group/project` (default branch) or `group/project:branch` |
 | `MAX_TODOS`             | `8`                  | Max to-do rows in the dropdown                      |
 | `TOKEN_WARN_DAYS`       | `21`                 | Warn (and offer one-click rotation) this many days before the token expires |
+| `UPDATE_CHECK_HOURS`    | `24`                 | How often to ask GitHub for a newer release (`0` = never; ⌥-click still checks on demand) |
 | `GITLAB_TOKEN`          | *(unset)*            | Escape hatch: token in the config instead of the Keychain (not recommended) |
 
-The file is plain bash, sourced by the plugin. The refresh interval is encoded
-in the plugin filename (`gitlab-radar.3m.sh` = every 3 minutes) — rename the
-file in your SwiftBar plugin folder to change it.
-
-## Where rows link, and how they clear
-
-| Row                  | Click opens                                | Cleared by                                                    |
-|----------------------|--------------------------------------------|---------------------------------------------------------------|
-| ❌ Broken build      | the failed pipeline (⌥-click: the MR)      | fixing it — the row mirrors live state, next passing/running pipeline removes it |
-| 👀 Review request    | the MR                                     | approving the MR / being removed as reviewer (re-requesting review brings it back, badged 🔁 ✓→); the 🔁 badge alone via *✓ mark to-do done* |
-| ✅ Approved MR       | the MR                                     | merging/closing it, or the approval being revoked — it mirrors live state |
-| 💬 New comment       | the exact comment (`…#note_<id>` anchor)   | the click itself (opens **and** marks read); ⌥-click marks read without opening; *Mark all read* for everything |
-| 📋 To-do             | GitLab's deep link (comment anchor etc.)   | *✓ mark done* (syncs to your GitLab to-do list) or resolving it in GitLab |
-| My open MRs          | the MR (submenu: its pipeline)             | merging/closing the MR — it's an overview, not an alert       |
-
-Two kinds of rows, two dismissal models: **state rows** (broken builds, review
-requests, MR overview) mirror GitLab and only disappear when reality changes —
-there is deliberately no way to swipe away a red pipeline. **Event rows**
-(comments, to-dos) are dismissable: comments via a local read-marker in
-`~/.cache/gitlab-radar/`, to-dos via the GitLab API so your to-do list stays
-in sync.
+The refresh interval is the `3m` in the plugin filename (`gitlab-radar.3m.sh` =
+every 3 minutes). Rename the file in your SwiftBar plugin folder to change it.
 
 ## How it works
 
-One script, three API queries per refresh plus a few small calls per open MR:
+One bash script, a few API calls per refresh:
 
-| Signal                    | Source                                                        |
-|---------------------------|---------------------------------------------------------------|
-| Broken MR pipelines       | `GET /merge_requests?scope=created_by_me&state=opened` → per-MR `head_pipeline.status` |
-| Broken default branches   | `GET /projects/:id/pipelines?ref=<default>` for watched projects (project metadata cached 24 h) |
-| Approved MRs of yours     | per-MR `GET /approvals` → `approved_by` (others only)         |
-| Review requests           | `GET /merge_requests?reviewer_username=<you>&state=opened`, minus MRs you approved (per-MR `GET /approvals` — the Premium-only `approved_by` list filter isn't assumed) |
-| Re-review badge 🔁        | pending `review_requested` items from `GET /todos`            |
-| New comments              | per-MR `GET /notes` (your MRs + MRs you're reviewing, even once approved), diffed against a local last-seen note id |
-| Mentions / replies / etc. | `GET /todos` (pending)                                        |
+| Signal                | Source                                                        |
+|-----------------------|---------------------------------------------------------------|
+| Broken pipelines      | `GET /merge_requests?scope=created_by_me&state=opened` → per-MR `head_pipeline.status`, plus `GET /projects/:id/pipelines?ref=<default>` for watched projects (project metadata cached 24 h) |
+| Review requests       | `GET /merge_requests?reviewer_username=<you>&state=opened`, minus MRs you approved (per-MR `GET /approvals`, since the `approved_by` filter is Premium-only) |
+| Approvals on your MRs | per-MR `GET /approvals` → `approved_by`, others only           |
+| New comments          | per-MR `GET /notes`, diffed against a locally stored last-seen note id |
+| To-dos and 🔁 badges  | `GET /todos`, pending only                                    |
 
-State (read-markers, project cache, sound snapshot) lives in
-`~/.cache/gitlab-radar/`. Menu actions (mark read, mark to-do done) are the
-plugin invoking itself with `--seen` / `--todo-done` — no extra scripts.
+Read-markers, the project cache, the sound snapshot and the last update check
+live in `~/.cache/gitlab-radar/`. Menu actions are the plugin invoking itself
+with a flag (`--seen`, `--todo-done`, `--check-update`, …), so there are no
+helper scripts.
 
 ## Troubleshooting
 
-- **`🦊 ⚠️` in the menu bar** — the API is unreachable: VPN down, wrong
-  `GITLAB_URL`, or the token expired. The dropdown has a *Test token* action
-  that shows the raw API response in a terminal.
-- **Setup row shown although you installed** — SwiftBar could not read the
-  Keychain item. Run `security find-generic-password -s gitlab-radar -w`
-  once in Terminal, and answer *Always Allow* on the prompt.
-- **A watched project never shows up** — the project cache lasts 24 h; clear
+- `🦊 ⚠️` in the menu bar means the API is unreachable: VPN down, wrong
+  `GITLAB_URL`, or an expired token. The dropdown has a *Test token* action that
+  shows the raw API response in a terminal.
+- The setup row appears although you installed: SwiftBar could not read the
+  Keychain item. Run `security find-generic-password -s gitlab-radar -w` once in
+  Terminal and answer *Always Allow*.
+- A watched project never shows up: the project cache lasts 24 h. Delete
   `~/.cache/gitlab-radar/projects.json` after renaming branches or projects.
-- **Comment counts look wrong after switching users** — read-markers are per
-  note id in `~/.cache/gitlab-radar/seen-comments.json`; delete it to
-  re-baseline (current comments are then treated as read, not replayed).
+- Comment counts look wrong after switching users: read-markers are per note id
+  in `~/.cache/gitlab-radar/seen-comments.json`. Delete that file to
+  re-baseline; current comments then count as read instead of being replayed.
 
-## Contributing / releasing
+## Contributing
 
-Commits on `main` follow [Conventional Commits](https://www.conventionalcommits.org)
-(`feat:`, `fix:`, `docs:`, `chore:` …) — CI rejects a PR whose commits don't, because
-the type is what decides the next version. On every push to `main`,
-[semantic-release](https://semantic-release.gitbook.io) works out that version from
-the commits, tags it, writes `CHANGELOG.md` and `package.json`, and cuts a GitHub
-Release whose notes carry the `npx …#v<version> install` line. Nothing is published
-to npm — the git tag *is* the release artifact, which is what `npx github:…` installs.
-
-Bump nothing by hand: `package.json` says `0.0.0-development` in the repo and
-semantic-release owns the real number.
+Commits on `main` follow
+[Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`,
+`docs:`, `chore:`). CI rejects a PR whose commits don't, because the type is what
+decides the next version.
+[semantic-release](https://semantic-release.gitbook.io) does the rest on every
+push to `main`: tag, `CHANGELOG.md`, `package.json`, GitHub Release. Nothing is
+published to npm. The git tag is the release artifact and that is what
+`npx github:…` installs, so never bump the version by hand.
