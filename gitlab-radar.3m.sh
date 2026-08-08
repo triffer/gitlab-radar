@@ -389,10 +389,35 @@ while IFS= read -r mr; do
       threads_ok=\(if .blocking_discussions_resolved == false then "false" else "true" end)"' <<<"$detail")"
   fi
   blocker=$(merge_blocker "$mstatus")
-  # On the MR row the 📝 badge already says "draft", so the blocker line would
-  # only repeat it. It stays on the approved row, which carries no badge.
+
+  # approvals on your MR (others only — you can't approve your own). This is
+  # state (mirrors GitLab), but the sound snapshot below fires once per *new*
+  # approver, so it doubles as a notification. Fetched here rather than where it
+  # is rendered because the row below decides what to say based on it.
+  #
+  # approvals_required/_left come from the same response: one approval is not
+  # necessarily enough, so "ready to merge" is only claimed when GitLab agrees.
+  approvals=$(api "projects/$pid/merge_requests/$iid/approvals") || approvals="{}"
+  # Reset first — an eval of a jq that produced nothing would otherwise leave the
+  # previous MR's approvers standing on this one.
+  n_appr=0; appr_names=""; appr_keys=""; appr_required=0; appr_left=0
+  eval "$(jq -r --arg me "$me" '
+    [.approved_by[]?.user | select(.username != $me)] as $others
+    | @sh "n_appr=\($others | length)
+      appr_names=\(if ($others | length) > 0 then ([$others[].name] | join(", ")) else "" end)
+      appr_keys=\(if ($others | length) > 0 then ([$others[].username] | sort | join(",")) else "" end)
+      appr_required=\(.approvals_required // 0)
+      appr_left=\(.approvals_left // 0)"' <<<"$approvals")"
+  case "$appr_required" in ''|*[!0-9]*) appr_required=0 ;; esac
+  case "$appr_left"     in ''|*[!0-9]*) appr_left=0 ;; esac
+
+  # GitLab reports one blocker, and two of them are things the row already says
+  # in a more useful form: the 📝 badge, and the approval line with its count.
+  # Both are dropped here rather than in merge_blocker(), because the approved
+  # row (which carries neither) still wants the full reason.
   row_blocker="$blocker"
-  [ "$mstatus" = "draft_status" ] && (( draft )) && row_blocker=""
+  [ "$mstatus" = "draft_status" ] && (( draft ))      && row_blocker=""
+  [ "$mstatus" = "not_approved" ] && (( n_appr > 0 )) && row_blocker=""
 
   # new comments from others since last seen (baseline silently on first sight)
   notes=$(api "projects/$pid/merge_requests/$iid/notes?per_page=100&sort=desc") || notes="[]"
@@ -425,21 +450,14 @@ while IFS= read -r mr; do
     state_keys+="C $key:$cur_max"$'\n'
   fi
 
-  # approvals on your MR (others only — you can't approve your own). This is
-  # state (mirrors GitLab), but the sound snapshot below fires once per *new*
-  # approver, so it doubles as a notification.
-  approvals=$(api "projects/$pid/merge_requests/$iid/approvals") || approvals="{}"
-  eval "$(jq -r --arg me "$me" '
-    [.approved_by[]?.user | select(.username != $me)]
-    | @sh "n_appr=\(length)
-      appr_names=\(if length > 0 then ([.[].name] | join(", ")) else "" end)
-      appr_keys=\(if length > 0 then ([.[].username] | sort | join(",")) else "" end)"' <<<"$approvals")"
   if (( n_appr > 0 )); then
     (( n_approved++ ))
     appr_names=$(sanitize "$appr_names")
     arow="✅ $ref — approved by $appr_names | href=$url size=13"
     arow+=$'\n'"-- $title | size=11 color=$GRAY"
-    if [ -n "$blocker" ]; then
+    if (( appr_left > 0 )); then
+      arow+=$'\n'"-- ✍️ $appr_left more approval(s) needed (of $appr_required) | size=11 color=$ORANGE"
+    elif [ -n "$blocker" ]; then
       arow+=$'\n'"-- $blocker | size=11 color=$ORANGE"
     elif [ "$threads_ok" != "true" ]; then
       arow+=$'\n'"-- ⚠️ unresolved threads still block merging | size=11 color=$ORANGE"
@@ -447,7 +465,11 @@ while IFS= read -r mr; do
       arow+=$'\n'"-- ready to merge | size=11 color=$GREEN"
     fi
     rows_approved+=("$arow")
-    row+=$'\n'"-- ✅ approved by $appr_names | size=11 color=$GREEN"
+    if (( appr_left > 0 )); then
+      row+=$'\n'"-- ✅ approved by $appr_names · $appr_left more needed | size=11 color=$ORANGE"
+    else
+      row+=$'\n'"-- ✅ approved by $appr_names | size=11 color=$GREEN"
+    fi
     state_keys+="A $key:$appr_keys"$'\n'
   fi
 
