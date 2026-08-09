@@ -559,7 +559,7 @@ while IFS= read -r mr; do
   (( n_review++ ))
   badge=""; [ -n "$todo_id" ] && badge="🔁 "
   [ "$approved" = "true" ] && [ -n "$todo_id" ] && badge="🔁 ✓→ "   # you approved, but review was re-requested
-  (( draft )) && badge="$badge📝 "   # asked for early feedback — read it as such
+  (( draft )) && badge="${badge}📝 "   # asked for early feedback — read it as such
   rrow="👀 $badge$ref $author — $title | href=$url size=13"
   if [ -n "$todo_id" ]; then
     rrow+=$'\n'"-- review (re-)requested $(age_str $(( now - todo_ts ))) ago | size=11 color=$ORANGE"
@@ -589,7 +589,7 @@ while IFS= read -r td; do
     *)                  lbl="• $action" ;;
   esac
   trow="$lbl · $tref | href=$turl size=13"
-  [ -n "$tbody" ] && trow+=$'\n'"-- “$tbody” | size=11 color=$GRAY"
+  [ -n "$tbody" ] && trow+=$'\n'"-- “${tbody}” | size=11 color=$GRAY"
   trow+=$'\n'"-- ✓ mark done | size=11 bash=\"$SELF\" param1=--todo-done param2=\"$tid\" terminal=false refresh=true"
   rows_todo+=("$trow")
 done < <(jq -c --arg me "$me" '
