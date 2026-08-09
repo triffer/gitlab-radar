@@ -29,24 +29,57 @@ jobs:
         run: npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
 
   test:
-    name: Shell checks
+    name: Shell tests (bash 5)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # The plugin is macOS/SwiftBar tooling and cannot be run meaningfully on a
-      # Linux runner (no menu bar, no Keychain), so CI checks what it can: that
-      # every script parses. Nothing here is bash 3.2 — that constraint is
-      # enforced by review, see CLAUDE.md.
-      - name: Check every script parses
-        run: |
-          for f in install.sh gitlab-radar.3m.sh; do
-            bash -n "$f" || exit 1
-          done
 
       - uses: actions/setup-node@v4
         with:
           node-version: 24
 
+      - run: npm ci
+
+      # The suite runs the real plugin and the real installer against a
+      # throwaway HOME, with curl, security, defaults and the other host-touching
+      # commands stubbed on PATH — see test/helper.bash. Nothing here reaches
+      # the network or the machine, which is what makes a Linux runner enough
+      # for macOS tooling.
+      - name: Run bats suite
+        run: npm test
+
       - name: Check the npx wrapper parses
         run: node --check bin/gitlab-radar.js
+
+  test-macos:
+    name: Shell tests (macOS, bash 3.2)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      # The whole point of this job: the radar runs under whatever /bin/bash the
+      # Mac ships, which is 3.2. Homebrew's bash 5 sits ahead of it on the
+      # runner's PATH and would quietly hide every incompatibility.
+      - name: Put system bash ahead of Homebrew bash on PATH
+        run: echo "/bin" >> "$GITHUB_PATH"
+
+      - name: Fail unless /bin/bash is still 3.2
+        run: |
+          bash --version | head -1
+          case "$(bash -c 'echo $BASH_VERSION')" in
+            3.2*) ;;
+            *) echo "expected bash 3.2 from /bin/bash — this job no longer tests what it claims" >&2
+               exit 1 ;;
+          esac
+
+      - name: Ensure jq
+        run: command -v jq >/dev/null || brew install jq
+
+      - name: Run bats suite
+        run: npm test

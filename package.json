@@ -13,7 +13,7 @@
     "README.md"
   ],
   "scripts": {
-    "test": "bash -n install.sh gitlab-radar.3m.sh",
+    "test": "bats test",
     "release": "semantic-release"
   },
   "engines": {
@@ -42,6 +42,7 @@
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/exec": "^7.1.0",
     "@semantic-release/git": "^10.0.1",
+    "bats": "^1.13.0",
     "semantic-release": "^25.0.9"
   }
 }
