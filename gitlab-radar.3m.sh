@@ -286,6 +286,37 @@ pipe_icon() {
   esac
 }
 
+# Why GitLab says this MR cannot be merged, in one line. GitLab reports exactly
+# one reason — the first blocker it hits — so this is a headline, not a
+# checklist: an MR that both conflicts and has open threads only ever says
+# "conflict". That is why blocking_discussions_resolved is still read separately.
+# detailed_merge_status arrived in GitLab 15.6; older instances fall back to the
+# coarse merge_status, which only knows yes/no. Anything unrecognised (a status
+# a newer GitLab invented) says nothing rather than guessing.
+merge_blocker() { # $1 = detailed_merge_status, or the older merge_status
+  case "$1" in
+    # mergeable, or GitLab is still working it out — saying anything here would
+    # just flicker between refreshes.
+    mergeable|can_be_merged|'')                  echo "" ;;
+    checking|unchecked|preparing|approvals_syncing|cannot_be_merged_recheck) echo "" ;;
+    conflict)                 echo "⚠️ conflicts with the target branch" ;;
+    need_rebase)              echo "⚠️ needs a rebase" ;;
+    discussions_not_resolved) echo "⚠️ unresolved threads block merging" ;;
+    draft_status)             echo "📝 still a draft — mark it ready" ;;
+    not_approved)             echo "✍️ waiting for approvals" ;;
+    requested_changes)        echo "🔁 a reviewer requested changes" ;;
+    ci_must_pass)             echo "⚠️ the pipeline has to pass first" ;;
+    ci_still_running)         echo "⏳ waiting for the pipeline" ;;
+    merge_time)               echo "⏳ held until its scheduled merge time" ;;
+    merge_request_blocked)    echo "⛔️ blocked by another merge request" ;;
+    status_checks_must_pass)  echo "⚠️ external status checks have to pass" ;;
+    jira_association_missing) echo "⚠️ needs a Jira issue in the title or branch" ;;
+    policies_denied)          echo "⛔️ blocked by a security policy" ;;
+    cannot_be_merged)         echo "⚠️ cannot be merged — conflicts?" ;;
+    *)                        echo "" ;;
+  esac
+}
+
 # ---- who am I (cached for a day) ---------------------------------------------
 me=""
 if [ -f "$ME_CACHE" ]; then
@@ -332,8 +363,14 @@ pending_pairs=""  # "key<TAB>maxid" lines -> pending-max.json for --seen-all
 # ---- my open MRs: pipeline status + new comments -----------------------------
 while IFS= read -r mr; do
   [ -n "$mr" ] || continue
+  # The "Draft:"/"WIP:" prefix is stripped from the title and shown as a badge
+  # instead: the same word in every row costs width and says nothing the icon
+  # cannot. .draft is the modern field, .work_in_progress the old one, and the
+  # title test covers instances that expose neither.
   eval "$(jq -r '@sh "pid=\(.project_id) iid=\(.iid)
-    title=\(.title // "?")
+    title=\((.title // "?") | sub("^ *(Draft|WIP) *: *"; ""; "i"))
+    draft=\(if (.draft // .work_in_progress // false)
+              or ((.title // "") | test("^ *(Draft|WIP) *:"; "i")) then 1 else 0 end)
     url=\(.web_url // "")
     full=\(.references.full // "")
     target=\(.target_branch // "")
@@ -344,22 +381,60 @@ while IFS= read -r mr; do
   key="$pid:$iid"
 
   detail=$(api "projects/$pid/merge_requests/$iid") || detail=""
-  p_status="none"; p_url=""; threads_ok="true"
+  p_status="none"; p_url=""; threads_ok="true"; mstatus=""
   if [ -n "$detail" ]; then
     eval "$(jq -r '@sh "p_status=\(.head_pipeline.status // "none")
       p_url=\(.head_pipeline.web_url // "")
+      mstatus=\(.detailed_merge_status // .merge_status // "")
       threads_ok=\(if .blocking_discussions_resolved == false then "false" else "true" end)"' <<<"$detail")"
   fi
+  blocker=$(merge_blocker "$mstatus")
+
+  # approvals on your MR (others only — you can't approve your own). This is
+  # state (mirrors GitLab), but the sound snapshot below fires once per *new*
+  # approver, so it doubles as a notification. Fetched here rather than where it
+  # is rendered because the row below decides what to say based on it.
+  #
+  # approvals_required/_left come from the same response: one approval is not
+  # necessarily enough, so "ready to merge" is only claimed when GitLab agrees.
+  approvals=$(api "projects/$pid/merge_requests/$iid/approvals") || approvals="{}"
+  # Reset first — an eval of a jq that produced nothing would otherwise leave the
+  # previous MR's approvers standing on this one.
+  n_appr=0; appr_names=""; appr_keys=""; appr_required=0; appr_left=0
+  eval "$(jq -r --arg me "$me" '
+    [.approved_by[]?.user | select(.username != $me)] as $others
+    | @sh "n_appr=\($others | length)
+      appr_names=\(if ($others | length) > 0 then ([$others[].name] | join(", ")) else "" end)
+      appr_keys=\(if ($others | length) > 0 then ([$others[].username] | sort | join(",")) else "" end)
+      appr_required=\(.approvals_required // 0)
+      appr_left=\(.approvals_left // 0)"' <<<"$approvals")"
+  case "$appr_required" in ''|*[!0-9]*) appr_required=0 ;; esac
+  case "$appr_left"     in ''|*[!0-9]*) appr_left=0 ;; esac
+
+  # GitLab reports one blocker, and two of them are things the row already says
+  # in a more useful form: the 📝 badge, and the approval line with its count.
+  # Both are dropped here rather than in merge_blocker(), because the approved
+  # row (which carries neither) still wants the full reason.
+  row_blocker="$blocker"
+  [ "$mstatus" = "draft_status" ] && (( draft ))      && row_blocker=""
+  [ "$mstatus" = "not_approved" ] && (( n_appr > 0 )) && row_blocker=""
 
   # new comments from others since last seen (baseline silently on first sight)
   notes=$(api "projects/$pid/merge_requests/$iid/notes?per_page=100&sort=desc") || notes="[]"
   diff_new_comments "$notes"
 
   picon=$(pipe_icon "$p_status")
-  row="$picon $ref $title | href=$url size=13"
+  draft_badge=""; (( draft )) && draft_badge="📝 "
+  row="$picon $draft_badge$ref $title | href=$url size=13"
   row+=$'\n'"-- → $target · updated $(age_str $(( now - upd ))) ago | size=11 color=$GRAY"
   [ -n "$p_url" ] && row+=$'\n'"-- pipeline: $p_status | href=$p_url size=11 color=$GRAY"
-  [ "$threads_ok" != "true" ] && row+=$'\n'"-- ⚠️ unresolved threads block merging | size=11 color=$ORANGE"
+  [ -n "$row_blocker" ] && row+=$'\n'"-- $row_blocker | size=11 color=$ORANGE"
+  # Second opinion on threads: merge_blocker() names one reason only, so an MR
+  # that conflicts AND has open threads would otherwise never mention them.
+  # Skipped when the blocker line already said exactly this.
+  if [ "$threads_ok" != "true" ] && [ "$mstatus" != "discussions_not_resolved" ]; then
+    row+=$'\n'"-- ⚠️ unresolved threads block merging | size=11 color=$ORANGE"
+  fi
 
   if (( new_n > 0 )); then
     (( n_comment_mrs++ ))
@@ -375,37 +450,43 @@ while IFS= read -r mr; do
     state_keys+="C $key:$cur_max"$'\n'
   fi
 
-  # approvals on your MR (others only — you can't approve your own). This is
-  # state (mirrors GitLab), but the sound snapshot below fires once per *new*
-  # approver, so it doubles as a notification.
-  approvals=$(api "projects/$pid/merge_requests/$iid/approvals") || approvals="{}"
-  eval "$(jq -r --arg me "$me" '
-    [.approved_by[]?.user | select(.username != $me)]
-    | @sh "n_appr=\(length)
-      appr_names=\(if length > 0 then ([.[].name] | join(", ")) else "" end)
-      appr_keys=\(if length > 0 then ([.[].username] | sort | join(",")) else "" end)"' <<<"$approvals")"
   if (( n_appr > 0 )); then
     (( n_approved++ ))
     appr_names=$(sanitize "$appr_names")
     arow="✅ $ref — approved by $appr_names | href=$url size=13"
     arow+=$'\n'"-- $title | size=11 color=$GRAY"
-    if [ "$threads_ok" != "true" ]; then
+    if (( appr_left > 0 )); then
+      arow+=$'\n'"-- ✍️ $appr_left more approval(s) needed (of $appr_required) | size=11 color=$ORANGE"
+    elif [ -n "$blocker" ]; then
+      arow+=$'\n'"-- $blocker | size=11 color=$ORANGE"
+    elif [ "$threads_ok" != "true" ]; then
       arow+=$'\n'"-- ⚠️ unresolved threads still block merging | size=11 color=$ORANGE"
     else
       arow+=$'\n'"-- ready to merge | size=11 color=$GREEN"
     fi
     rows_approved+=("$arow")
-    row+=$'\n'"-- ✅ approved by $appr_names | size=11 color=$GREEN"
+    if (( appr_left > 0 )); then
+      row+=$'\n'"-- ✅ approved by $appr_names · $appr_left more needed | size=11 color=$ORANGE"
+    else
+      row+=$'\n'"-- ✅ approved by $appr_names | size=11 color=$GREEN"
+    fi
     state_keys+="A $key:$appr_keys"$'\n'
   fi
 
   if [ "$p_status" = "failed" ]; then
-    (( n_fail++ ))
-    frow="❌ $ref — pipeline failed | href=${p_url:-$url} size=13"
-    frow+=$'\n'"-- $title | size=11 color=$GRAY"
-    frow+=$'\n'"-- open MR instead | alternate=true size=11 href=$url"
-    rows_fail+=("$frow")
-    state_keys+="F mr:$key"$'\n'
+    if (( draft )); then
+      # Red CI on a draft is work in progress, not news. It stays visible on the
+      # MR row — with its pipeline link right above — but never lights up the
+      # menu bar and never makes a sound.
+      row+=$'\n'"-- ❌ pipeline failed — not counted while this is a draft | size=11 color=$DIM"
+    else
+      (( n_fail++ ))
+      frow="❌ $ref — pipeline failed | href=${p_url:-$url} size=13"
+      frow+=$'\n'"-- $title | size=11 color=$GRAY"
+      frow+=$'\n'"-- open MR instead | alternate=true size=11 href=$url"
+      rows_fail+=("$frow")
+      state_keys+="F mr:$key"$'\n'
+    fi
   fi
 
   rows_mymr+=("$row")
@@ -415,7 +496,9 @@ done < <(jq -c '.[]' <<<"$mrs" 2>/dev/null)
 while IFS= read -r mr; do
   [ -n "$mr" ] || continue
   eval "$(jq -r '@sh "pid=\(.project_id) iid=\(.iid)
-    title=\(.title // "?")
+    title=\((.title // "?") | sub("^ *(Draft|WIP) *: *"; ""; "i"))
+    draft=\(if (.draft // .work_in_progress // false)
+              or ((.title // "") | test("^ *(Draft|WIP) *:"; "i")) then 1 else 0 end)
     url=\(.web_url // "")
     full=\(.references.full // "")
     author=\(.author.name // "?")
@@ -470,6 +553,7 @@ while IFS= read -r mr; do
   (( n_review++ ))
   badge=""; [ -n "$todo_id" ] && badge="🔁 "
   [ "$approved" = "true" ] && [ -n "$todo_id" ] && badge="🔁 ✓→ "   # you approved, but review was re-requested
+  (( draft )) && badge="$badge📝 "   # asked for early feedback — read it as such
   rrow="👀 $badge$ref $author — $title | href=$url size=13"
   if [ -n "$todo_id" ]; then
     rrow+=$'\n'"-- review (re-)requested $(age_str $(( now - todo_ts ))) ago | size=11 color=$ORANGE"
