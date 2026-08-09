@@ -276,7 +276,7 @@ case "${1:-}" in
                   "$API/personal_access_tokens/self/rotate?expires_at=$exp" \
                   | jq -r '.token // empty')
                 if [ -n "$new" ]; then
-                  security add-generic-password -U -a "$USER" -s gitlab-radar -w "$new"
+                  security add-generic-password -U -a "${USER:-$(id -un)}" -s gitlab-radar -w "$new"
                   rm -f "$STATE_DIR/token-info"
                   notify "Token rotated — valid until $exp"
                 else

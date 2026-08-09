@@ -147,7 +147,10 @@ else
   printf '  Paste token (input hidden): '
   read -rs GL_TOKEN; echo
   [ -n "$GL_TOKEN" ] || die "no token entered"
-  security add-generic-password -U -a "$USER" -s "$KEYCHAIN_SERVICE" -w "$GL_TOKEN"
+  # ${USER:-…}: this script runs under `set -u`, and USER is absent from a
+  # login-less environment (a launchd job, a CI shell) — where an abort here
+  # would leave a config behind and no token to go with it.
+  security add-generic-password -U -a "${USER:-$(id -un)}" -s "$KEYCHAIN_SERVICE" -w "$GL_TOKEN"
   unset GL_TOKEN
   info "token stored in Keychain (service: $KEYCHAIN_SERVICE)"
 fi
