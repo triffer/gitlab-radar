@@ -1,3 +1,17 @@
+# [1.2.0](https://github.com/triffer/gitlab-radar/compare/v1.1.0...v1.2.0) (2026-08-09)
+
+
+### Features
+
+* badge drafts, explain merge blockers and verify approvals ([ef5eb35](https://github.com/triffer/gitlab-radar/commit/ef5eb35686f3354e62486604d5886f866c8c1e14))
+
+
+### Update
+
+```bash
+npx github:triffer/gitlab-radar#v1.2.0 install
+```
+
 # [1.1.0](https://github.com/triffer/gitlab-radar/compare/v1.0.0...v1.1.0) (2026-08-07)
 
 
