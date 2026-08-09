@@ -198,6 +198,68 @@ update_fetch() { # $1: unix time
   update_cache_write "${tag#v}" "$when"
 }
 
+# ---- wording and icons -------------------------------------------------------
+age_str() {
+  local s=$1
+  (( s < 0 )) && s=0
+  if   (( s < 60 ));    then echo "${s}s"
+  elif (( s < 3600 ));  then echo "$(( s / 60 ))m"
+  elif (( s < 86400 )); then echo "$(( s / 3600 ))h"
+  else                       echo "$(( s / 86400 ))d"
+  fi
+}
+
+sanitize() { # keep SwiftBar markup safe: "|" is the parameter separator
+  local t=${1//|/¦}; printf '%s' "${t//$'\n'/ }"
+}
+
+pipe_icon() {
+  case "$1" in
+    success)            echo "🟢" ;;
+    failed)             echo "❌" ;;
+    running|preparing)  echo "🔵" ;;
+    pending|created|waiting_for_resource|scheduled) echo "⏳" ;;
+    canceled|canceling|skipped) echo "⚪️" ;;
+    *)                  echo "▫️" ;;
+  esac
+}
+
+# Why GitLab says this MR cannot be merged, in one line. GitLab reports exactly
+# one reason — the first blocker it hits — so this is a headline, not a
+# checklist: an MR that both conflicts and has open threads only ever says
+# "conflict". That is why blocking_discussions_resolved is still read separately.
+# detailed_merge_status arrived in GitLab 15.6; older instances fall back to the
+# coarse merge_status, which only knows yes/no. Anything unrecognised (a status
+# a newer GitLab invented) says nothing rather than guessing.
+merge_blocker() { # $1 = detailed_merge_status, or the older merge_status
+  case "$1" in
+    # mergeable, or GitLab is still working it out — saying anything here would
+    # just flicker between refreshes.
+    mergeable|can_be_merged|'')                  echo "" ;;
+    checking|unchecked|preparing|approvals_syncing|cannot_be_merged_recheck) echo "" ;;
+    conflict)                 echo "⚠️ conflicts with the target branch" ;;
+    need_rebase)              echo "⚠️ needs a rebase" ;;
+    discussions_not_resolved) echo "⚠️ unresolved threads block merging" ;;
+    draft_status)             echo "📝 still a draft — mark it ready" ;;
+    not_approved)             echo "✍️ waiting for approvals" ;;
+    requested_changes)        echo "🔁 a reviewer requested changes" ;;
+    ci_must_pass)             echo "⚠️ the pipeline has to pass first" ;;
+    ci_still_running)         echo "⏳ waiting for the pipeline" ;;
+    merge_time)               echo "⏳ held until its scheduled merge time" ;;
+    merge_request_blocked)    echo "⛔️ blocked by another merge request" ;;
+    status_checks_must_pass)  echo "⚠️ external status checks have to pass" ;;
+    jira_association_missing) echo "⚠️ needs a Jira issue in the title or branch" ;;
+    policies_denied)          echo "⛔️ blocked by a security policy" ;;
+    cannot_be_merged)         echo "⚠️ cannot be merged — conflicts?" ;;
+    *)                        echo "" ;;
+  esac
+}
+
+# Everything above this line defines something; everything below it acts. The
+# test suite sources the plugin with GITLAB_RADAR_SOURCE_ONLY set to call one
+# function without a GitLab to talk to — see test/helper.bash.
+[ -n "${GITLAB_RADAR_SOURCE_ONLY:-}" ] && return 0
+
 # ---- menu action mode (SwiftBar invokes us with arguments, refresh=true) ----
 case "${1:-}" in
   --seen)       seen_set "$2" "${3:-0}"; exit 0 ;;
@@ -260,62 +322,6 @@ if [ -z "$TOKEN" ]; then
 fi
 
 now=$(date +%s)
-
-age_str() {
-  local s=$1
-  (( s < 0 )) && s=0
-  if   (( s < 60 ));    then echo "${s}s"
-  elif (( s < 3600 ));  then echo "$(( s / 60 ))m"
-  elif (( s < 86400 )); then echo "$(( s / 3600 ))h"
-  else                       echo "$(( s / 86400 ))d"
-  fi
-}
-
-sanitize() { # keep SwiftBar markup safe: "|" is the parameter separator
-  local t=${1//|/¦}; printf '%s' "${t//$'\n'/ }"
-}
-
-pipe_icon() {
-  case "$1" in
-    success)            echo "🟢" ;;
-    failed)             echo "❌" ;;
-    running|preparing)  echo "🔵" ;;
-    pending|created|waiting_for_resource|scheduled) echo "⏳" ;;
-    canceled|canceling|skipped) echo "⚪️" ;;
-    *)                  echo "▫️" ;;
-  esac
-}
-
-# Why GitLab says this MR cannot be merged, in one line. GitLab reports exactly
-# one reason — the first blocker it hits — so this is a headline, not a
-# checklist: an MR that both conflicts and has open threads only ever says
-# "conflict". That is why blocking_discussions_resolved is still read separately.
-# detailed_merge_status arrived in GitLab 15.6; older instances fall back to the
-# coarse merge_status, which only knows yes/no. Anything unrecognised (a status
-# a newer GitLab invented) says nothing rather than guessing.
-merge_blocker() { # $1 = detailed_merge_status, or the older merge_status
-  case "$1" in
-    # mergeable, or GitLab is still working it out — saying anything here would
-    # just flicker between refreshes.
-    mergeable|can_be_merged|'')                  echo "" ;;
-    checking|unchecked|preparing|approvals_syncing|cannot_be_merged_recheck) echo "" ;;
-    conflict)                 echo "⚠️ conflicts with the target branch" ;;
-    need_rebase)              echo "⚠️ needs a rebase" ;;
-    discussions_not_resolved) echo "⚠️ unresolved threads block merging" ;;
-    draft_status)             echo "📝 still a draft — mark it ready" ;;
-    not_approved)             echo "✍️ waiting for approvals" ;;
-    requested_changes)        echo "🔁 a reviewer requested changes" ;;
-    ci_must_pass)             echo "⚠️ the pipeline has to pass first" ;;
-    ci_still_running)         echo "⏳ waiting for the pipeline" ;;
-    merge_time)               echo "⏳ held until its scheduled merge time" ;;
-    merge_request_blocked)    echo "⛔️ blocked by another merge request" ;;
-    status_checks_must_pass)  echo "⚠️ external status checks have to pass" ;;
-    jira_association_missing) echo "⚠️ needs a Jira issue in the title or branch" ;;
-    policies_denied)          echo "⛔️ blocked by a security policy" ;;
-    cannot_be_merged)         echo "⚠️ cannot be merged — conflicts?" ;;
-    *)                        echo "" ;;
-  esac
-}
 
 # ---- who am I (cached for a day) ---------------------------------------------
 me=""

@@ -25,7 +25,17 @@ die()   { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 [ "$(uname)" = "Darwin" ] || die "Run this on your Mac host, not inside a sandbox."
 command -v jq >/dev/null 2>&1 || die "jq is required: brew install jq"
 
-plugin_dir() { defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true; }
+# Where SwiftBar keeps its plugins. `defaults` resolves the home directory from
+# the password database, so it ignores $HOME entirely and always answers for the
+# real user — which is why the test suite has to be able to say where the plugin
+# goes instead of redirecting HOME and hoping. Nothing else sets this.
+plugin_dir() {
+  if [ -n "${GITLAB_RADAR_PLUGIN_DIR:-}" ]; then
+    printf '%s\n' "$GITLAB_RADAR_PLUGIN_DIR"
+  else
+    defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true
+  fi
+}
 
 uninstall() {
   echo "Uninstalling GitLab Radar…"
