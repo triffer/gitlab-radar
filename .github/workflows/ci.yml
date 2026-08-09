@@ -3,6 +3,9 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    # `edited` so retitling a PR re-runs the title check below, rather than
+    # needing a pushed commit to clear it.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -27,6 +30,15 @@ jobs:
       # decide the next version (feat -> minor, fix -> patch, etc.).
       - name: Validate PR commits
         run: npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+
+      # Dependabot is exempt for the same reason its commits are — see
+      # commitlint.config.js. PR_TITLE goes through the environment because a
+      # title interpolated into `run:` would execute.
+      - name: Validate the PR title (the subject a squash merge lands)
+        if: github.actor != 'dependabot[bot]'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
 
   test:
     name: Shell tests (bash 5)
