@@ -198,69 +198,7 @@ update_fetch() { # $1: unix time
   update_cache_write "${tag#v}" "$when"
 }
 
-# ---- menu action mode (SwiftBar invokes us with arguments, refresh=true) ----
-case "${1:-}" in
-  --seen)       seen_set "$2" "${3:-0}"; exit 0 ;;
-  --rotate)     # rotate the token via the API and store the new one in the Keychain.
-                # Rotation revokes the old token instantly, so never rotate unless
-                # the new one has a safe place to go.
-                if [ "$TOKEN_SRC" != "keychain" ] || ! command -v security >/dev/null 2>&1; then
-                  notify "Token comes from the config file — rotate it manually"
-                  open "$GITLAB_URL/-/user_settings/personal_access_tokens" 2>/dev/null || true
-                  exit 0
-                fi
-                exp=$(date -v+364d +%Y-%m-%d 2>/dev/null || date -d "+364 days" +%Y-%m-%d)
-                new=$(curl -sf --max-time 15 -X POST -H "PRIVATE-TOKEN: $TOKEN" \
-                  "$API/personal_access_tokens/self/rotate?expires_at=$exp" \
-                  | jq -r '.token // empty')
-                if [ -n "$new" ]; then
-                  security add-generic-password -U -a "$USER" -s gitlab-radar -w "$new"
-                  rm -f "$STATE_DIR/token-info"
-                  notify "Token rotated — valid until $exp"
-                else
-                  notify "Rotation failed (needs 'api' scope + GitLab ≥ 16.10) — opening token settings"
-                  open "$GITLAB_URL/-/user_settings/personal_access_tokens" 2>/dev/null || true
-                fi
-                exit 0 ;;
-  --open-seen)  seen_set "$3" "${4:-0}"; open "$2"; exit 0 ;;
-  --seen-all)   # merge the per-MR maxima recorded on the last render
-                if [ -s "$PENDING_MAX" ]; then
-                  tmp=$(mktemp)
-                  jq -s '.[0] * .[1]' "$SEEN" "$PENDING_MAX" > "$tmp" && mv "$tmp" "$SEEN"
-                fi
-                exit 0 ;;
-  --todo-done)  api_post "todos/$2/mark_as_done" || true; exit 0 ;;
-  --check-update)
-                # The ⌥-click on the version row: ask GitHub now rather than
-                # waiting for the next UPDATE_CHECK_HOURS window. Synchronous,
-                # so SwiftBar's refresh=true repaints with the answer.
-                update_fetch "$(date +%s)" || notify "Update check failed — GitHub unreachable?"
-                exit 0 ;;
-  --copy-update)
-                # Hand over the upgrade command instead of running it; see
-                # update_command() for why the radar never installs itself.
-                update_cache_read
-                update_command "$LATEST_VERSION" | pbcopy
-                notify "Update command copied to the clipboard"
-                exit 0 ;;
-esac
-
-# ---- preconditions -----------------------------------------------------------
-if ! command -v jq >/dev/null 2>&1; then
-  echo "🦊 | color=$DIM"; echo "---"; echo "jq is required — brew install jq"
-  exit 0
-fi
-if [ -z "$TOKEN" ]; then
-  echo "🦊 | color=$DIM"
-  echo "---"
-  echo "GitLab Radar is not set up | color=$ORANGE"
-  echo "Run: npx github:triffer/gitlab-radar install | color=$GRAY"
-  echo "It stores your token in the Keychain (service: gitlab-radar) | size=11 color=$GRAY"
-  exit 0
-fi
-
-now=$(date +%s)
-
+# ---- wording and icons -------------------------------------------------------
 age_str() {
   local s=$1
   (( s < 0 )) && s=0
@@ -316,6 +254,74 @@ merge_blocker() { # $1 = detailed_merge_status, or the older merge_status
     *)                        echo "" ;;
   esac
 }
+
+# Everything above this line defines something; everything below it acts. The
+# test suite sources the plugin with GITLAB_RADAR_SOURCE_ONLY set to call one
+# function without a GitLab to talk to — see test/helper.bash.
+[ -n "${GITLAB_RADAR_SOURCE_ONLY:-}" ] && return 0
+
+# ---- menu action mode (SwiftBar invokes us with arguments, refresh=true) ----
+case "${1:-}" in
+  --seen)       seen_set "$2" "${3:-0}"; exit 0 ;;
+  --rotate)     # rotate the token via the API and store the new one in the Keychain.
+                # Rotation revokes the old token instantly, so never rotate unless
+                # the new one has a safe place to go.
+                if [ "$TOKEN_SRC" != "keychain" ] || ! command -v security >/dev/null 2>&1; then
+                  notify "Token comes from the config file — rotate it manually"
+                  open "$GITLAB_URL/-/user_settings/personal_access_tokens" 2>/dev/null || true
+                  exit 0
+                fi
+                exp=$(date -v+364d +%Y-%m-%d 2>/dev/null || date -d "+364 days" +%Y-%m-%d)
+                new=$(curl -sf --max-time 15 -X POST -H "PRIVATE-TOKEN: $TOKEN" \
+                  "$API/personal_access_tokens/self/rotate?expires_at=$exp" \
+                  | jq -r '.token // empty')
+                if [ -n "$new" ]; then
+                  security add-generic-password -U -a "${USER:-$(id -un)}" -s gitlab-radar -w "$new"
+                  rm -f "$STATE_DIR/token-info"
+                  notify "Token rotated — valid until $exp"
+                else
+                  notify "Rotation failed (needs 'api' scope + GitLab ≥ 16.10) — opening token settings"
+                  open "$GITLAB_URL/-/user_settings/personal_access_tokens" 2>/dev/null || true
+                fi
+                exit 0 ;;
+  --open-seen)  seen_set "$3" "${4:-0}"; open "$2"; exit 0 ;;
+  --seen-all)   # merge the per-MR maxima recorded on the last render
+                if [ -s "$PENDING_MAX" ]; then
+                  tmp=$(mktemp)
+                  jq -s '.[0] * .[1]' "$SEEN" "$PENDING_MAX" > "$tmp" && mv "$tmp" "$SEEN"
+                fi
+                exit 0 ;;
+  --todo-done)  api_post "todos/$2/mark_as_done" || true; exit 0 ;;
+  --check-update)
+                # The ⌥-click on the version row: ask GitHub now rather than
+                # waiting for the next UPDATE_CHECK_HOURS window. Synchronous,
+                # so SwiftBar's refresh=true repaints with the answer.
+                update_fetch "$(date +%s)" || notify "Update check failed — GitHub unreachable?"
+                exit 0 ;;
+  --copy-update)
+                # Hand over the upgrade command instead of running it; see
+                # update_command() for why the radar never installs itself.
+                update_cache_read
+                update_command "$LATEST_VERSION" | pbcopy
+                notify "Update command copied to the clipboard"
+                exit 0 ;;
+esac
+
+# ---- preconditions -----------------------------------------------------------
+if ! command -v jq >/dev/null 2>&1; then
+  echo "🦊 | color=$DIM"; echo "---"; echo "jq is required — brew install jq"
+  exit 0
+fi
+if [ -z "$TOKEN" ]; then
+  echo "🦊 | color=$DIM"
+  echo "---"
+  echo "GitLab Radar is not set up | color=$ORANGE"
+  echo "Run: npx github:triffer/gitlab-radar install | color=$GRAY"
+  echo "It stores your token in the Keychain (service: gitlab-radar) | size=11 color=$GRAY"
+  exit 0
+fi
+
+now=$(date +%s)
 
 # ---- who am I (cached for a day) ---------------------------------------------
 me=""
@@ -553,7 +559,7 @@ while IFS= read -r mr; do
   (( n_review++ ))
   badge=""; [ -n "$todo_id" ] && badge="🔁 "
   [ "$approved" = "true" ] && [ -n "$todo_id" ] && badge="🔁 ✓→ "   # you approved, but review was re-requested
-  (( draft )) && badge="$badge📝 "   # asked for early feedback — read it as such
+  (( draft )) && badge="${badge}📝 "   # asked for early feedback — read it as such
   rrow="👀 $badge$ref $author — $title | href=$url size=13"
   if [ -n "$todo_id" ]; then
     rrow+=$'\n'"-- review (re-)requested $(age_str $(( now - todo_ts ))) ago | size=11 color=$ORANGE"
@@ -583,7 +589,7 @@ while IFS= read -r td; do
     *)                  lbl="• $action" ;;
   esac
   trow="$lbl · $tref | href=$turl size=13"
-  [ -n "$tbody" ] && trow+=$'\n'"-- “$tbody” | size=11 color=$GRAY"
+  [ -n "$tbody" ] && trow+=$'\n'"-- “${tbody}” | size=11 color=$GRAY"
   trow+=$'\n'"-- ✓ mark done | size=11 bash=\"$SELF\" param1=--todo-done param2=\"$tid\" terminal=false refresh=true"
   rows_todo+=("$trow")
 done < <(jq -c --arg me "$me" '
